@@ -9,6 +9,9 @@
   const inaccuracyDegreesInput = document.getElementById("inaccuracyDegrees");
   const trailColorPickerInput = document.getElementById("trailColorPicker");
   const trailColorHexInput = document.getElementById("trailColorHex");
+  const trailWidthInput = document.getElementById("trailWidth");
+  const triggerMouseButtonInput = document.getElementById("triggerMouseButton");
+  const triggerModifierInput = document.getElementById("triggerModifier");
   const resetBtn = document.getElementById("resetBtn");
   const statusEl = document.getElementById("status");
 
@@ -95,6 +98,9 @@
     minSegmentPxInput.value = String(settings.minSegmentPx);
     inaccuracyDegreesInput.value = String(settings.inaccuracyDegrees);
     syncColorInputs(settings.trailColor);
+    trailWidthInput.value = String(settings.trailWidth);
+    triggerMouseButtonInput.value = settings.triggerMouseButton;
+    triggerModifierInput.value = settings.triggerModifier;
   }
 
   function collectSettingsFromForm() {
@@ -111,7 +117,10 @@
       gestures,
       minSegmentPx: minSegmentPxInput.value,
       inaccuracyDegrees: inaccuracyDegreesInput.value,
-      trailColor: trailColorHexInput.value
+      trailColor: trailColorHexInput.value,
+      trailWidth: trailWidthInput.value,
+      triggerMouseButton: triggerMouseButtonInput.value,
+      triggerModifier: triggerModifierInput.value
     });
   }
 

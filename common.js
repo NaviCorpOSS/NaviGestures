@@ -1,6 +1,8 @@
 (() => {
   const VALID_DIRECTIONS = ["U", "D", "L", "R", "UL", "UR", "DL", "DR"];
   const ACTIONS = ["reload", "closeTab", "forward", "back", "newTab"];
+  const VALID_MOUSE_BUTTONS = ["right", "middle"];
+  const VALID_MODIFIERS = ["unset", "alt", "shift", "ctrl"];
   const ACTION_LABELS = {
     reload: "Reload page",
     closeTab: "Close tab",
@@ -19,7 +21,10 @@
     },
     minSegmentPx: 18,
     inaccuracyDegrees: 50,
-    trailColor: "#24a1ff"
+    trailColor: "#24a1ff",
+    trailWidth: 3,
+    triggerMouseButton: "right",
+    triggerModifier: "unset"
   };
 
   function clampNumber(value, min, max, fallback) {
@@ -66,6 +71,13 @@
     return fallbackColor;
   }
 
+  function normalizeChoice(value, validChoices, fallbackValue) {
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase();
+    return validChoices.includes(normalized) ? normalized : fallbackValue;
+  }
+
   function sanitizeSettings(raw) {
     const base = raw && typeof raw === "object" ? raw : {};
     const rawGestures = base.gestures && typeof base.gestures === "object" ? base.gestures : {};
@@ -79,7 +91,18 @@
       gestures,
       minSegmentPx: clampNumber(base.minSegmentPx, 8, 80, DEFAULT_SETTINGS.minSegmentPx),
       inaccuracyDegrees: clampNumber(base.inaccuracyDegrees, 10, 85, DEFAULT_SETTINGS.inaccuracyDegrees),
-      trailColor: normalizeHexColor(base.trailColor, DEFAULT_SETTINGS.trailColor)
+      trailColor: normalizeHexColor(base.trailColor, DEFAULT_SETTINGS.trailColor),
+      trailWidth: clampNumber(base.trailWidth, 1, 16, DEFAULT_SETTINGS.trailWidth),
+      triggerMouseButton: normalizeChoice(
+        base.triggerMouseButton,
+        VALID_MOUSE_BUTTONS,
+        DEFAULT_SETTINGS.triggerMouseButton
+      ),
+      triggerModifier: normalizeChoice(
+        base.triggerModifier,
+        VALID_MODIFIERS,
+        DEFAULT_SETTINGS.triggerModifier
+      )
     };
   }
 
@@ -87,6 +110,8 @@
     VALID_DIRECTIONS,
     ACTIONS,
     ACTION_LABELS,
+    VALID_MOUSE_BUTTONS,
+    VALID_MODIFIERS,
     DEFAULT_SETTINGS,
     parseGestureInput,
     normalizeHexColor,

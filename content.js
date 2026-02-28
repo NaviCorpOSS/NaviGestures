@@ -28,6 +28,31 @@
   let trailPixelRatio = 1;
   let gestureInvalid = false;
 
+  function getConfiguredMouseButtonCode() {
+    return settings.triggerMouseButton === "middle" ? 1 : 2;
+  }
+
+  function getConfiguredMouseButtonMask() {
+    return settings.triggerMouseButton === "middle" ? 4 : 2;
+  }
+
+  function isMatchingMouseButton(buttonCode) {
+    return buttonCode === getConfiguredMouseButtonCode();
+  }
+
+  function isModifierSatisfied(event) {
+    switch (settings.triggerModifier) {
+      case "alt":
+        return !!event.altKey || !!event.metaKey;
+      case "shift":
+        return !!event.shiftKey;
+      case "ctrl":
+        return !!event.ctrlKey;
+      default:
+        return true;
+    }
+  }
+
   function storageGet(key) {
     if (isBrowserApi) {
       return api.storage.local.get(key).catch(() => ({}));
@@ -95,7 +120,7 @@
 
   function applyTrailStyle() {
     if (!trailCtx) return;
-    trailCtx.lineWidth = 3 * trailPixelRatio;
+    trailCtx.lineWidth = settings.trailWidth * trailPixelRatio;
     trailCtx.lineCap = "round";
     trailCtx.lineJoin = "round";
     const color = gestureInvalid ? INVALID_TRAIL_COLOR : settings.trailColor;
@@ -152,18 +177,19 @@
     if (!tracking) return;
     const observedPath = [...path];
     const observedDistance = totalDistance;
+    const wasInvalid = gestureInvalid;
     resetGestureState();
     finishTrail();
 
     if (!allowAction) return;
-    if (!observedPath.length || observedDistance < settings.minSegmentPx || gestureInvalid) return;
+    if (!observedPath.length || observedDistance < settings.minSegmentPx || wasInvalid) return;
 
     const action = detectExactAction(observedPath);
     if (action) {
       sendGestureAction(action);
-      suppressNextContextMenu = true;
+      if (settings.triggerMouseButton === "right") suppressNextContextMenu = true;
     } else if (observedDistance >= settings.minSegmentPx * 1.5) {
-      suppressNextContextMenu = true;
+      if (settings.triggerMouseButton === "right") suppressNextContextMenu = true;
     }
   }
 
@@ -183,38 +209,6 @@
   function angularDifference(a, b) {
     const diff = Math.abs(a - b);
     return Math.min(diff, 360 - diff);
-  }
-
-  function substitutionCost(observed, expected, tolerance) {
-    if (observed === expected) return 0;
-    const diff = angularDifference(angleForDirection(observed), angleForDirection(expected));
-    if (diff <= tolerance) return 0.2;
-    if (diff <= tolerance + 45) return 0.5;
-    if (diff <= tolerance + 90) return 0.8;
-    return 1;
-  }
-
-  function gestureDistance(observed, expected, tolerance) {
-    const m = observed.length;
-    const n = expected.length;
-    if (!m && !n) return 0;
-
-    const insertionDeletionCost = 0.7;
-    const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
-
-    for (let i = 1; i <= m; i += 1) dp[i][0] = i * insertionDeletionCost;
-    for (let j = 1; j <= n; j += 1) dp[0][j] = j * insertionDeletionCost;
-
-    for (let i = 1; i <= m; i += 1) {
-      for (let j = 1; j <= n; j += 1) {
-        const sub = dp[i - 1][j - 1] + substitutionCost(observed[i - 1], expected[j - 1], tolerance);
-        const del = dp[i - 1][j] + insertionDeletionCost;
-        const ins = dp[i][j - 1] + insertionDeletionCost;
-        dp[i][j] = Math.min(sub, del, ins);
-      }
-    }
-
-    return dp[m][n] / Math.max(m, n);
   }
 
   function vectorToDirection(dx, dy) {
@@ -283,7 +277,8 @@
   }
 
   function onMouseDown(event) {
-    if (event.button !== 2) return;
+    if (!isMatchingMouseButton(event.button)) return;
+    if (!isModifierSatisfied(event)) return;
     tracking = true;
     gestureInvalid = false;
     path = [];
@@ -296,7 +291,7 @@
 
   function onMouseMove(event) {
     if (!tracking || !lastPoint) return;
-    if ((event.buttons & 2) === 0) {
+    if ((event.buttons & getConfiguredMouseButtonMask()) === 0) {
       completeGesture(false);
       return;
     }
@@ -322,7 +317,7 @@
 
   function onMouseUp(event) {
     if (!tracking) return;
-    completeGesture(event.button === 2);
+    completeGesture(isMatchingMouseButton(event.button));
   }
 
   function onContextMenu(event) {

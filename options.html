@@ -34,7 +34,8 @@
         margin-bottom: 10px;
       }
       input[type="text"],
-      input[type="number"] {
+      input[type="number"],
+      select {
         width: 100%;
         box-sizing: border-box;
         padding: 8px;
@@ -99,6 +100,29 @@
           <input id="trailColorPicker" type="color" />
           <input id="trailColorHex" type="text" placeholder="#24a1ff" />
         </div>
+      </div>
+
+      <div class="row">
+        <label for="trailWidth">Trail width (px)</label>
+        <input id="trailWidth" type="number" min="1" max="16" step="1" />
+      </div>
+
+      <div class="row">
+        <label for="triggerMouseButton">Trigger mouse button</label>
+        <select id="triggerMouseButton">
+          <option value="right">Right mouse button</option>
+          <option value="middle">Middle mouse button</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label for="triggerModifier">Required modifier key</label>
+        <select id="triggerModifier">
+          <option value="unset">Unset (none)</option>
+          <option value="alt">Alt / Meta</option>
+          <option value="shift">Shift</option>
+          <option value="ctrl">Control</option>
+        </select>
       </div>
 
       <div class="buttons">
