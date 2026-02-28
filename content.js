@@ -1,7 +1,7 @@
 (() => {
   const api = typeof browser !== "undefined" ? browser : chrome;
   const isBrowserApi = typeof browser !== "undefined";
-  const common = globalThis.N3TGestureCommon;
+  const common = globalThis.NaviGesturesCommon;
   const INVALID_TRAIL_COLOR = "#ff3b30";
   const STATIONARY_CLICK_PX = 4;
   const RIGHT_MENU_DOUBLECLICK_MS = 350;
@@ -286,7 +286,7 @@
 
   function sendGestureAction(action) {
     try {
-      api.runtime.sendMessage({ type: "n3t-perform-action", action });
+      api.runtime.sendMessage({ type: "navigestures-perform-action", action });
     } catch (_) {
       // Ignore messaging failures on restricted pages.
     }

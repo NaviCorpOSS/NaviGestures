@@ -77,7 +77,7 @@
   }
 
   api.runtime.onMessage.addListener((message, sender) => {
-    if (!message || message.type !== "n3t-perform-action") return;
+    if (!message || message.type !== "navigestures-perform-action") return;
     performAction(message.action, sender && sender.tab ? sender.tab.id : null);
   });
 

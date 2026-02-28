@@ -1,7 +1,7 @@
 (() => {
   const api = typeof browser !== "undefined" ? browser : chrome;
   const isBrowserApi = typeof browser !== "undefined";
-  const common = globalThis.N3TGestureCommon;
+  const common = globalThis.NaviGesturesCommon;
 
   const form = document.getElementById("settingsForm");
   const gestureRows = document.getElementById("gestureRows");

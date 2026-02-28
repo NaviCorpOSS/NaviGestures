@@ -106,7 +106,7 @@
     };
   }
 
-  globalThis.N3TGestureCommon = {
+  globalThis.NaviGesturesCommon = {
     VALID_DIRECTIONS,
     ACTIONS,
     ACTION_LABELS,
