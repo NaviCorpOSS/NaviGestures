@@ -3,6 +3,8 @@
   const isBrowserApi = typeof browser !== "undefined";
   const common = globalThis.N3TGestureCommon;
   const INVALID_TRAIL_COLOR = "#ff3b30";
+  const STATIONARY_CLICK_PX = 4;
+  const RIGHT_MENU_DOUBLECLICK_MS = 350;
   const directionAngles = {
     R: 0,
     DR: 45,
@@ -27,6 +29,8 @@
   let trailLastPoint = null;
   let trailPixelRatio = 1;
   let gestureInvalid = false;
+  let blockGestureUntilRelease = false;
+  let lastRightStationaryClickAt = 0;
 
   function getConfiguredMouseButtonCode() {
     return settings.triggerMouseButton === "middle" ? 1 : 2;
@@ -165,6 +169,17 @@
     }, 160);
   }
 
+  function beginGestureTracking(startX, startY) {
+    tracking = true;
+    gestureInvalid = false;
+    path = [];
+    totalDistance = 0;
+    lastPoint = { x: startX, y: startY };
+    const startPoint = toTrailPoint(startX, startY);
+    startTrail(startPoint.x, startPoint.y);
+    applyTrailStyle();
+  }
+
   function resetGestureState() {
     tracking = false;
     path = [];
@@ -194,6 +209,7 @@
   }
 
   function cancelGesture() {
+    blockGestureUntilRelease = false;
     if (clearTrailTimer) {
       clearTimeout(clearTrailTimer);
       clearTrailTimer = null;
@@ -279,18 +295,25 @@
   function onMouseDown(event) {
     if (!isMatchingMouseButton(event.button)) return;
     if (!isModifierSatisfied(event)) return;
-    tracking = true;
-    gestureInvalid = false;
-    path = [];
-    totalDistance = 0;
-    lastPoint = { x: event.clientX, y: event.clientY };
-    const startPoint = toTrailPoint(event.clientX, event.clientY);
-    startTrail(startPoint.x, startPoint.y);
-    applyTrailStyle();
+
+    if (settings.triggerMouseButton === "right") {
+      const now = Date.now();
+      const isSecondStationaryClick = now - lastRightStationaryClickAt <= RIGHT_MENU_DOUBLECLICK_MS;
+      if (isSecondStationaryClick) {
+        // Second stationary right click: let native context menu flow.
+        lastRightStationaryClickAt = 0;
+        blockGestureUntilRelease = true;
+        return;
+      }
+    }
+
+    blockGestureUntilRelease = false;
+    beginGestureTracking(event.clientX, event.clientY);
   }
 
   function onMouseMove(event) {
     if (!tracking || !lastPoint) return;
+
     if ((event.buttons & getConfiguredMouseButtonMask()) === 0) {
       completeGesture(false);
       return;
@@ -316,14 +339,31 @@
   }
 
   function onMouseUp(event) {
+    if (blockGestureUntilRelease && isMatchingMouseButton(event.button)) {
+      blockGestureUntilRelease = false;
+      return;
+    }
     if (!tracking) return;
+
+    if (settings.triggerMouseButton === "right" && isMatchingMouseButton(event.button)) {
+      const isStationaryClick = path.length === 0 && totalDistance <= STATIONARY_CLICK_PX;
+      lastRightStationaryClickAt = isStationaryClick ? Date.now() : 0;
+    }
+
     completeGesture(isMatchingMouseButton(event.button));
   }
 
   function onContextMenu(event) {
-    if (tracking || suppressNextContextMenu) {
+    if (suppressNextContextMenu) {
       event.preventDefault();
       suppressNextContextMenu = false;
+      return;
+    }
+
+    if (tracking) {
+      // While tracking, menu is always suppressed (gesture press cycle).
+      event.preventDefault();
+      return;
     }
   }
 
