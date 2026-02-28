@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>N3T Mouse Gestures - Settings</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        margin: 24px;
+        max-width: 760px;
+      }
+      h1 {
+        font-size: 1.3rem;
+        margin: 0 0 16px;
+      }
+      p {
+        margin: 0 0 10px;
+      }
+      .card {
+        border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+        border-radius: 10px;
+        padding: 14px;
+        margin-bottom: 14px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      input[type="text"],
+      input[type="number"] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px;
+      }
+      .color-inputs {
+        display: grid;
+        grid-template-columns: 46px 1fr;
+        gap: 8px;
+        align-items: center;
+      }
+      input[type="color"] {
+        width: 46px;
+        height: 36px;
+        border: 0;
+        background: transparent;
+        padding: 0;
+      }
+      .buttons {
+        display: flex;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      button {
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      #status {
+        margin-top: 10px;
+        min-height: 1.2rem;
+      }
+      code {
+        padding: 2px 4px;
+        border-radius: 4px;
+        background: color-mix(in srgb, currentColor 14%, transparent);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>N3T Mouse Gestures Settings</h1>
+
+    <div class="card">
+      <p>Use direction tokens: <code>U D L R UL UR DL DR</code></p>
+      <p>Examples: <code>D U</code>, <code>UR</code>, <code>D,R</code></p>
+    </div>
+
+    <form id="settingsForm" class="card">
+      <div id="gestureRows"></div>
+
+      <div class="row">
+        <label for="minSegmentPx">Movement threshold (px)</label>
+        <input id="minSegmentPx" type="number" min="8" max="80" step="1" />
+      </div>
+
+      <div class="row">
+        <label for="inaccuracyDegrees">Inaccuracy tolerance (deg)</label>
+        <input id="inaccuracyDegrees" type="number" min="10" max="85" step="1" />
+      </div>
+
+      <div class="row">
+        <label for="trailColorHex">Trail color</label>
+        <div class="color-inputs">
+          <input id="trailColorPicker" type="color" />
+          <input id="trailColorHex" type="text" placeholder="#24a1ff" />
+        </div>
+      </div>
+
+      <div class="buttons">
+        <button type="submit">Save</button>
+        <button id="resetBtn" type="button">Reset defaults</button>
+      </div>
+      <div id="status"></div>
+    </form>
+
+    <script src="common.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>
