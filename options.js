@@ -12,6 +12,7 @@
   const trailWidthInput = document.getElementById("trailWidth");
   const triggerMouseButtonInput = document.getElementById("triggerMouseButton");
   const triggerModifierInput = document.getElementById("triggerModifier");
+  const showDebugLogWindowInput = document.getElementById("showDebugLogWindow");
   const resetBtn = document.getElementById("resetBtn");
   const statusEl = document.getElementById("status");
 
@@ -101,6 +102,7 @@
     trailWidthInput.value = String(settings.trailWidth);
     triggerMouseButtonInput.value = settings.triggerMouseButton;
     triggerModifierInput.value = settings.triggerModifier;
+    showDebugLogWindowInput.checked = !!settings.showDebugLogWindow;
   }
 
   function collectSettingsFromForm() {
@@ -120,7 +122,8 @@
       trailColor: trailColorHexInput.value,
       trailWidth: trailWidthInput.value,
       triggerMouseButton: triggerMouseButtonInput.value,
-      triggerModifier: triggerModifierInput.value
+      triggerModifier: triggerModifierInput.value,
+      showDebugLogWindow: showDebugLogWindowInput.checked
     });
   }
 

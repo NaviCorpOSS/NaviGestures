@@ -5,6 +5,7 @@
   const INVALID_TRAIL_COLOR = "#ff3b30";
   const STATIONARY_CLICK_PX = 4;
   const RIGHT_MENU_DOUBLECLICK_MS = 350;
+  const DEBUG_LOG_MAX_LINES = 220;
   const directionAngles = {
     R: 0,
     DR: 45,
@@ -31,6 +32,201 @@
   let gestureInvalid = false;
   let blockGestureUntilRelease = false;
   let lastRightStationaryClickAt = 0;
+  let debugPanel = null;
+  let debugLogBody = null;
+  let debugLogLines = [];
+  let debugCollapsed = false;
+
+  function nowTimeLabel() {
+    const d = new Date();
+    return d.toLocaleTimeString([], { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
+  }
+
+  function appendDebugLog(message) {
+    if (!settings.showDebugLogWindow) return;
+    if (!debugLogBody) return;
+    debugLogLines.push(`[${nowTimeLabel()}] ${message}`);
+    if (debugLogLines.length > DEBUG_LOG_MAX_LINES) {
+      debugLogLines.shift();
+    }
+    debugLogBody.textContent = debugLogLines.join("\n");
+    debugLogBody.scrollTop = debugLogBody.scrollHeight;
+  }
+
+  function createDebugPanel() {
+    if (!settings.showDebugLogWindow || debugPanel || !document.documentElement) return;
+    debugPanel = document.createElement("section");
+    debugPanel.setAttribute("aria-label", "NaviGestures debug logs");
+    debugPanel.style.position = "fixed";
+    debugPanel.style.right = "12px";
+    debugPanel.style.bottom = "12px";
+    debugPanel.style.width = "380px";
+    debugPanel.style.maxHeight = "44vh";
+    debugPanel.style.background = "rgba(0,0,0,0.82)";
+    debugPanel.style.border = "1px solid rgba(255,255,255,0.2)";
+    debugPanel.style.borderRadius = "8px";
+    debugPanel.style.color = "#f2f2f2";
+    debugPanel.style.zIndex = "2147483646";
+    debugPanel.style.fontFamily = "ui-monospace, Menlo, Monaco, Consolas, monospace";
+    debugPanel.style.fontSize = "11px";
+    debugPanel.style.lineHeight = "1.35";
+    debugPanel.style.pointerEvents = "auto";
+    debugPanel.style.boxShadow = "0 8px 28px rgba(0,0,0,0.35)";
+
+    const header = document.createElement("div");
+    header.style.display = "flex";
+    header.style.alignItems = "center";
+    header.style.gap = "6px";
+    header.style.padding = "8px 8px 6px";
+    header.style.borderBottom = "1px solid rgba(255,255,255,0.12)";
+
+    const title = document.createElement("strong");
+    title.textContent = "NaviGestures debug";
+    title.style.flex = "1";
+    title.style.fontSize = "11px";
+    title.style.fontWeight = "600";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.textContent = "Copy";
+    copyBtn.style.cursor = "pointer";
+    copyBtn.style.fontSize = "11px";
+    copyBtn.style.padding = "2px 6px";
+    copyBtn.style.borderRadius = "4px";
+    copyBtn.style.border = "1px solid rgba(255,255,255,0.3)";
+    copyBtn.style.background = "rgba(255,255,255,0.08)";
+    copyBtn.style.color = "inherit";
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(debugLogLines.join("\n"));
+        appendDebugLog("Copied logs to clipboard.");
+      } catch (_) {
+        appendDebugLog("Copy failed: clipboard access denied.");
+      }
+    });
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.textContent = "Clear";
+    clearBtn.style.cursor = "pointer";
+    clearBtn.style.fontSize = "11px";
+    clearBtn.style.padding = "2px 6px";
+    clearBtn.style.borderRadius = "4px";
+    clearBtn.style.border = "1px solid rgba(255,255,255,0.3)";
+    clearBtn.style.background = "rgba(255,255,255,0.08)";
+    clearBtn.style.color = "inherit";
+    clearBtn.addEventListener("click", () => {
+      debugLogLines = [];
+      if (debugLogBody) debugLogBody.textContent = "";
+      appendDebugLog("Log cleared.");
+    });
+
+    const collapseBtn = document.createElement("button");
+    collapseBtn.type = "button";
+    collapseBtn.textContent = "Hide";
+    collapseBtn.style.cursor = "pointer";
+    collapseBtn.style.fontSize = "11px";
+    collapseBtn.style.padding = "2px 6px";
+    collapseBtn.style.borderRadius = "4px";
+    collapseBtn.style.border = "1px solid rgba(255,255,255,0.3)";
+    collapseBtn.style.background = "rgba(255,255,255,0.08)";
+    collapseBtn.style.color = "inherit";
+
+    debugLogBody = document.createElement("pre");
+    debugLogBody.style.margin = "0";
+    debugLogBody.style.padding = "8px";
+    debugLogBody.style.maxHeight = "calc(44vh - 42px)";
+    debugLogBody.style.overflow = "auto";
+    debugLogBody.style.whiteSpace = "pre-wrap";
+    debugLogBody.style.wordBreak = "break-word";
+    debugLogBody.style.userSelect = "text";
+
+    collapseBtn.addEventListener("click", () => {
+      debugCollapsed = !debugCollapsed;
+      debugLogBody.style.display = debugCollapsed ? "none" : "block";
+      debugPanel.style.maxHeight = debugCollapsed ? "unset" : "44vh";
+      collapseBtn.textContent = debugCollapsed ? "Show" : "Hide";
+    });
+
+    header.appendChild(title);
+    header.appendChild(copyBtn);
+    header.appendChild(clearBtn);
+    header.appendChild(collapseBtn);
+    debugPanel.appendChild(header);
+    debugPanel.appendChild(debugLogBody);
+    document.documentElement.appendChild(debugPanel);
+    appendDebugLog("Debug panel ready.");
+  }
+
+  function removeDebugPanel() {
+    if (debugPanel && debugPanel.parentNode) {
+      debugPanel.parentNode.removeChild(debugPanel);
+    }
+    debugPanel = null;
+    debugLogBody = null;
+    debugCollapsed = false;
+    debugLogLines = [];
+  }
+
+  function syncDebugPanelVisibility() {
+    if (settings.showDebugLogWindow) {
+      createDebugPanel();
+      return;
+    }
+    removeDebugPanel();
+  }
+
+  function diffLabel(observed, expected) {
+    const diff = angularDifference(angleForDirection(observed), angleForDirection(expected));
+    return `${observed} vs ${expected} (${diff.toFixed(1)}°)`;
+  }
+
+  function prefixCompatibilityDetails(observedPath) {
+    const observedLen = observedPath.length;
+    const details = [];
+    for (const action of orderedActions) {
+      const expected = settings.gestures[action] || [];
+      if (expected.length < observedLen) {
+        details.push(`${action}: too short (${expected.length} < ${observedLen})`);
+        continue;
+      }
+      let mismatch = null;
+      for (let i = 0; i < observedLen; i += 1) {
+        if (!directionsCompatible(observedPath[i], expected[i])) {
+          mismatch = `${action}: mismatch at ${i + 1} (${diffLabel(observedPath[i], expected[i])}, tol=${settings.inaccuracyDegrees}°)`;
+          break;
+        }
+      }
+      details.push(mismatch || `${action}: compatible`);
+    }
+    return details;
+  }
+
+  function exactMatchEvaluation(observedPath) {
+    const details = [];
+    for (const action of orderedActions) {
+      const expected = settings.gestures[action] || [];
+      if (expected.length !== observedPath.length) {
+        details.push(`${action}: length ${expected.length} != ${observedPath.length}`);
+        continue;
+      }
+      let allCompatible = true;
+      let score = 0;
+      for (let i = 0; i < observedPath.length; i += 1) {
+        const observed = observedPath[i];
+        const wanted = expected[i];
+        const diff = angularDifference(angleForDirection(observed), angleForDirection(wanted));
+        if (diff > settings.inaccuracyDegrees) {
+          details.push(`${action}: reject at ${i + 1} (${diffLabel(observed, wanted)}, tol=${settings.inaccuracyDegrees}°)`);
+          allCompatible = false;
+          break;
+        }
+        score += diff;
+      }
+      if (allCompatible) details.push(`${action}: candidate score=${score.toFixed(1)}`);
+    }
+    return details;
+  }
 
   function getConfiguredMouseButtonCode() {
     return settings.triggerMouseButton === "middle" ? 1 : 2;
@@ -82,6 +278,10 @@
     const data = await storageGet("settings");
     settings = common.sanitizeSettings(data.settings || common.DEFAULT_SETTINGS);
     applyTrailStyle();
+    syncDebugPanelVisibility();
+    appendDebugLog(
+      `Settings loaded: minSegmentPx=${settings.minSegmentPx}, inaccuracy=${settings.inaccuracyDegrees}°, trigger=${settings.triggerMouseButton}`
+    );
   }
 
   function createTrailCanvas() {
@@ -178,6 +378,7 @@
     const startPoint = toTrailPoint(startX, startY);
     startTrail(startPoint.x, startPoint.y);
     applyTrailStyle();
+    appendDebugLog(`Gesture start at (${Math.round(startX)}, ${Math.round(startY)})`);
   }
 
   function resetGestureState() {
@@ -196,15 +397,39 @@
     resetGestureState();
     finishTrail();
 
-    if (!allowAction) return;
-    if (!observedPath.length || observedDistance < settings.minSegmentPx || wasInvalid) return;
+    appendDebugLog(
+      `Gesture end: allowAction=${allowAction}, path=${observedPath.join(" -> ") || "(none)"}, distance=${observedDistance.toFixed(1)}, invalid=${wasInvalid}`
+    );
+    if (!allowAction) {
+      appendDebugLog("Gesture ignored: release button does not match trigger.");
+      return;
+    }
+    if (!observedPath.length) {
+      appendDebugLog("Gesture ignored: no direction segments captured.");
+      return;
+    }
+    if (observedDistance < settings.minSegmentPx) {
+      appendDebugLog(
+        `Gesture ignored: distance ${observedDistance.toFixed(1)} < minSegmentPx ${settings.minSegmentPx}.`
+      );
+      return;
+    }
+    if (wasInvalid) {
+      appendDebugLog("Gesture rejected: path was previously marked invalid.");
+      return;
+    }
 
+    appendDebugLog(`Exact matching checks: ${exactMatchEvaluation(observedPath).join(" | ")}`);
     const action = detectExactAction(observedPath);
     if (action) {
+      appendDebugLog(`Action accepted: ${action}`);
       sendGestureAction(action);
       if (settings.triggerMouseButton === "right") suppressNextContextMenu = true;
     } else if (observedDistance >= settings.minSegmentPx * 1.5) {
+      appendDebugLog("No exact action match, suppressing context menu due to substantial movement.");
       if (settings.triggerMouseButton === "right") suppressNextContextMenu = true;
+    } else {
+      appendDebugLog("No exact action match and movement too small to suppress context menu.");
     }
   }
 
@@ -216,6 +441,7 @@
     }
     resetGestureState();
     clearTrail();
+    appendDebugLog("Gesture cancelled.");
   }
 
   function angleForDirection(direction) {
@@ -232,6 +458,67 @@
     const sectors = ["R", "DR", "D", "DL", "L", "UL", "U", "UR"];
     const index = Math.round(angle / 45) % 8;
     return sectors[index];
+  }
+
+  function directionVector(direction) {
+    switch (direction) {
+      case "R":
+        return { x: 1, y: 0 };
+      case "DR":
+        return { x: 1, y: 1 };
+      case "D":
+        return { x: 0, y: 1 };
+      case "DL":
+        return { x: -1, y: 1 };
+      case "L":
+        return { x: -1, y: 0 };
+      case "UL":
+        return { x: -1, y: -1 };
+      case "U":
+        return { x: 0, y: -1 };
+      case "UR":
+        return { x: 1, y: -1 };
+      default:
+        return { x: 0, y: 0 };
+    }
+  }
+
+  function directionFromVector(x, y) {
+    if (x === 1 && y === 0) return "R";
+    if (x === 1 && y === 1) return "DR";
+    if (x === 0 && y === 1) return "D";
+    if (x === -1 && y === 1) return "DL";
+    if (x === -1 && y === 0) return "L";
+    if (x === -1 && y === -1) return "UL";
+    if (x === 0 && y === -1) return "U";
+    if (x === 1 && y === -1) return "UR";
+    return null;
+  }
+
+  function isCardinal(direction) {
+    return direction === "R" || direction === "D" || direction === "L" || direction === "U";
+  }
+
+  function collapseBridgeDiagonal(pathDirections) {
+    if (pathDirections.length < 3) return false;
+    const aIndex = pathDirections.length - 3;
+    const bIndex = pathDirections.length - 2;
+    const cIndex = pathDirections.length - 1;
+    const a = pathDirections[aIndex];
+    const b = pathDirections[bIndex];
+    const c = pathDirections[cIndex];
+    if (!isCardinal(a) || !isCardinal(c) || a === c) return false;
+
+    const aVec = directionVector(a);
+    const cVec = directionVector(c);
+    // A hard corner must switch axes.
+    if (aVec.x === cVec.x || aVec.y === cVec.y) return false;
+
+    const bridge = directionFromVector(aVec.x + cVec.x, aVec.y + cVec.y);
+    if (!bridge || b !== bridge) return false;
+
+    pathDirections.splice(bIndex, 1);
+    return true;
   }
 
   function directionsCompatible(observed, expected) {
@@ -294,7 +581,10 @@
 
   function onMouseDown(event) {
     if (!isMatchingMouseButton(event.button)) return;
-    if (!isModifierSatisfied(event)) return;
+    if (!isModifierSatisfied(event)) {
+      appendDebugLog(`Mouse down ignored: modifier '${settings.triggerModifier}' not held.`);
+      return;
+    }
 
     if (settings.triggerMouseButton === "right") {
       const now = Date.now();
@@ -303,6 +593,7 @@
         // Second stationary right click: let native context menu flow.
         lastRightStationaryClickAt = 0;
         blockGestureUntilRelease = true;
+        appendDebugLog("Right-click bypass: second stationary click opens native context menu.");
         return;
       }
     }
@@ -330,9 +621,16 @@
     const dir = vectorToDirection(dx, dy);
     if (path[path.length - 1] !== dir) {
       path.push(dir);
+      appendDebugLog(
+        `Direction added: ${dir} (dx=${dx.toFixed(1)}, dy=${dy.toFixed(1)}, step=${dist.toFixed(1)}), path=${path.join(" -> ")}`
+      );
+      if (collapseBridgeDiagonal(path)) {
+        appendDebugLog(`Path smoothed: collapsed bridge diagonal, path=${path.join(" -> ")}`);
+      }
       if (!gestureInvalid && !pathCanStillMatchAnyAction(path)) {
         gestureInvalid = true;
         applyTrailStyle();
+        appendDebugLog(`Path invalidated: ${prefixCompatibilityDetails(path).join(" | ")}`);
       }
     }
     lastPoint = { x: event.clientX, y: event.clientY };
@@ -348,6 +646,9 @@
     if (settings.triggerMouseButton === "right" && isMatchingMouseButton(event.button)) {
       const isStationaryClick = path.length === 0 && totalDistance <= STATIONARY_CLICK_PX;
       lastRightStationaryClickAt = isStationaryClick ? Date.now() : 0;
+      if (isStationaryClick) {
+        appendDebugLog("Stationary right click detected (possible context-menu double-click sequence).");
+      }
     }
 
     completeGesture(isMatchingMouseButton(event.button));
@@ -357,12 +658,14 @@
     if (suppressNextContextMenu) {
       event.preventDefault();
       suppressNextContextMenu = false;
+      appendDebugLog("Context menu suppressed after gesture.");
       return;
     }
 
     if (tracking) {
       // While tracking, menu is always suppressed (gesture press cycle).
       event.preventDefault();
+      appendDebugLog("Context menu suppressed while tracking gesture.");
       return;
     }
   }
@@ -371,8 +674,11 @@
     if (areaName !== "local" || !changes.settings) return;
     settings = common.sanitizeSettings(changes.settings.newValue || common.DEFAULT_SETTINGS);
     applyTrailStyle();
+    syncDebugPanelVisibility();
+    appendDebugLog("Settings updated from storage change.");
   });
 
+  window.addEventListener("DOMContentLoaded", syncDebugPanelVisibility, { once: true });
   loadSettings();
   if (document.documentElement) {
     createTrailCanvas();

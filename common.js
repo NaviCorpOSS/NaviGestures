@@ -24,7 +24,8 @@
     trailColor: "#24a1ff",
     trailWidth: 3,
     triggerMouseButton: "right",
-    triggerModifier: "unset"
+    triggerModifier: "unset",
+    showDebugLogWindow: false
   };
 
   function clampNumber(value, min, max, fallback) {
@@ -78,6 +79,11 @@
     return validChoices.includes(normalized) ? normalized : fallbackValue;
   }
 
+  function normalizeBoolean(value, fallbackValue) {
+    if (typeof value === "boolean") return value;
+    return fallbackValue;
+  }
+
   function sanitizeSettings(raw) {
     const base = raw && typeof raw === "object" ? raw : {};
     const rawGestures = base.gestures && typeof base.gestures === "object" ? base.gestures : {};
@@ -102,6 +108,10 @@
         base.triggerModifier,
         VALID_MODIFIERS,
         DEFAULT_SETTINGS.triggerModifier
+      ),
+      showDebugLogWindow: normalizeBoolean(
+        base.showDebugLogWindow,
+        DEFAULT_SETTINGS.showDebugLogWindow
       )
     };
   }
