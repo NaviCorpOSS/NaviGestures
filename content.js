@@ -9,6 +9,7 @@
   const ROCKER_WHEEL_COOLDOWN_MS = 180;
   const ROCKER_WHEEL_MIN_DELTA_X = 6;
   const ROCKER_WHEEL_DOMINANCE_RATIO = 1.3;
+  const LOCAL_SCROLL_STEP_RATIO = 0.85;
   const DEBUG_LOG_MAX_LINES = 220;
   const directionAngles = {
     R: 0,
@@ -20,7 +21,21 @@
     U: 270,
     UR: 315
   };
-  const orderedActions = ["reload", "closeTab", "forward", "back", "newTab"];
+  const orderedActions = [
+    "reload",
+    "closeTab",
+    "forward",
+    "back",
+    "newTab",
+    "zoomIn",
+    "zoomOut",
+    "scrollLeft",
+    "scrollRight",
+    "toggleMaximizeWindow",
+    "maximizeWindow",
+    "minimizeWindow",
+    "toggleFullscreen"
+  ];
 
   let settings = common.sanitizeSettings(common.DEFAULT_SETTINGS);
   let tracking = false;
@@ -615,10 +630,25 @@
   }
 
   function sendGestureAction(action) {
+    if (performLocalPageAction(action)) return;
     try {
       api.runtime.sendMessage({ type: "navigestures-perform-action", action });
     } catch (_) {
       // Ignore messaging failures on restricted pages.
+    }
+  }
+
+  function performLocalPageAction(action) {
+    const step = Math.max(120, Math.round(window.innerWidth * LOCAL_SCROLL_STEP_RATIO));
+    switch (action) {
+      case "scrollLeft":
+        window.scrollBy({ left: -step, top: 0, behavior: "smooth" });
+        return true;
+      case "scrollRight":
+        window.scrollBy({ left: step, top: 0, behavior: "smooth" });
+        return true;
+      default:
+        return false;
     }
   }
 

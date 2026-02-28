@@ -1,6 +1,20 @@
 (() => {
   const VALID_DIRECTIONS = ["U", "D", "L", "R", "UL", "UR", "DL", "DR"];
-  const ACTIONS = ["reload", "closeTab", "forward", "back", "newTab"];
+  const ACTIONS = [
+    "reload",
+    "closeTab",
+    "forward",
+    "back",
+    "newTab",
+    "zoomIn",
+    "zoomOut",
+    "scrollLeft",
+    "scrollRight",
+    "toggleMaximizeWindow",
+    "maximizeWindow",
+    "minimizeWindow",
+    "toggleFullscreen"
+  ];
   const ROCKER_ASSIGNABLE_ACTIONS = ["none", ...ACTIONS];
   const VALID_MOUSE_BUTTONS = ["right", "middle"];
   const VALID_MODIFIERS = ["unset", "alt", "shift", "ctrl"];
@@ -10,7 +24,15 @@
     closeTab: "Close tab",
     forward: "Go forward",
     back: "Go back",
-    newTab: "Open new tab"
+    newTab: "Open new tab",
+    zoomIn: "Zoom in",
+    zoomOut: "Zoom out",
+    scrollLeft: "Scroll left",
+    scrollRight: "Scroll right",
+    toggleMaximizeWindow: "Toggle maximize window",
+    maximizeWindow: "Maximize window",
+    minimizeWindow: "Minimize window",
+    toggleFullscreen: "Toggle fullscreen"
   };
 
   const DEFAULT_SETTINGS = {
@@ -19,7 +41,15 @@
       closeTab: ["D", "R"],
       forward: ["R"],
       back: ["L"],
-      newTab: ["UR"]
+      newTab: ["UR"],
+      zoomIn: [],
+      zoomOut: [],
+      scrollLeft: [],
+      scrollRight: [],
+      toggleMaximizeWindow: [],
+      maximizeWindow: [],
+      minimizeWindow: [],
+      toggleFullscreen: []
     },
     minSegmentPx: 18,
     inaccuracyDegrees: 50,
@@ -80,7 +110,10 @@
     const normalized = String(value || "")
       .trim()
       .toLowerCase();
-    return validChoices.includes(normalized) ? normalized : fallbackValue;
+    for (const choice of validChoices) {
+      if (String(choice).toLowerCase() === normalized) return choice;
+    }
+    return fallbackValue;
   }
 
   function normalizeBoolean(value, fallbackValue) {
