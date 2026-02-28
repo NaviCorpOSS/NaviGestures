@@ -12,6 +12,8 @@
   const trailWidthInput = document.getElementById("trailWidth");
   const triggerMouseButtonInput = document.getElementById("triggerMouseButton");
   const triggerModifierInput = document.getElementById("triggerModifier");
+  const rockerMiddleLeftActionInput = document.getElementById("rockerMiddleLeftAction");
+  const rockerMiddleRightActionInput = document.getElementById("rockerMiddleRightAction");
   const showDebugLogWindowInput = document.getElementById("showDebugLogWindow");
   const resetBtn = document.getElementById("resetBtn");
   const statusEl = document.getElementById("status");
@@ -91,6 +93,16 @@
     }
   }
 
+  function buildRockerActionOptions(selectEl) {
+    selectEl.innerHTML = "";
+    for (const action of common.ROCKER_ASSIGNABLE_ACTIONS) {
+      const option = document.createElement("option");
+      option.value = action;
+      option.textContent = common.ACTION_LABELS[action];
+      selectEl.appendChild(option);
+    }
+  }
+
   function renderSettings(settings) {
     for (const action of common.ACTIONS) {
       const input = document.getElementById(`gesture-${action}`);
@@ -102,6 +114,8 @@
     trailWidthInput.value = String(settings.trailWidth);
     triggerMouseButtonInput.value = settings.triggerMouseButton;
     triggerModifierInput.value = settings.triggerModifier;
+    rockerMiddleLeftActionInput.value = settings.rockerMiddleLeftAction;
+    rockerMiddleRightActionInput.value = settings.rockerMiddleRightAction;
     showDebugLogWindowInput.checked = !!settings.showDebugLogWindow;
   }
 
@@ -123,6 +137,8 @@
       trailWidth: trailWidthInput.value,
       triggerMouseButton: triggerMouseButtonInput.value,
       triggerModifier: triggerModifierInput.value,
+      rockerMiddleLeftAction: rockerMiddleLeftActionInput.value,
+      rockerMiddleRightAction: rockerMiddleRightActionInput.value,
       showDebugLogWindow: showDebugLogWindowInput.checked
     });
   }
@@ -173,5 +189,7 @@
   });
 
   buildGestureRows();
+  buildRockerActionOptions(rockerMiddleLeftActionInput);
+  buildRockerActionOptions(rockerMiddleRightActionInput);
   loadAndRender();
 })();

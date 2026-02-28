@@ -1,9 +1,11 @@
 (() => {
   const VALID_DIRECTIONS = ["U", "D", "L", "R", "UL", "UR", "DL", "DR"];
   const ACTIONS = ["reload", "closeTab", "forward", "back", "newTab"];
+  const ROCKER_ASSIGNABLE_ACTIONS = ["none", ...ACTIONS];
   const VALID_MOUSE_BUTTONS = ["right", "middle"];
   const VALID_MODIFIERS = ["unset", "alt", "shift", "ctrl"];
   const ACTION_LABELS = {
+    none: "Do nothing",
     reload: "Reload page",
     closeTab: "Close tab",
     forward: "Go forward",
@@ -25,6 +27,8 @@
     trailWidth: 3,
     triggerMouseButton: "right",
     triggerModifier: "unset",
+    rockerMiddleLeftAction: "back",
+    rockerMiddleRightAction: "forward",
     showDebugLogWindow: false
   };
 
@@ -109,6 +113,16 @@
         VALID_MODIFIERS,
         DEFAULT_SETTINGS.triggerModifier
       ),
+      rockerMiddleLeftAction: normalizeChoice(
+        base.rockerMiddleLeftAction,
+        ROCKER_ASSIGNABLE_ACTIONS,
+        DEFAULT_SETTINGS.rockerMiddleLeftAction
+      ),
+      rockerMiddleRightAction: normalizeChoice(
+        base.rockerMiddleRightAction,
+        ROCKER_ASSIGNABLE_ACTIONS,
+        DEFAULT_SETTINGS.rockerMiddleRightAction
+      ),
       showDebugLogWindow: normalizeBoolean(
         base.showDebugLogWindow,
         DEFAULT_SETTINGS.showDebugLogWindow
@@ -120,6 +134,7 @@
     VALID_DIRECTIONS,
     ACTIONS,
     ACTION_LABELS,
+    ROCKER_ASSIGNABLE_ACTIONS,
     VALID_MOUSE_BUTTONS,
     VALID_MODIFIERS,
     DEFAULT_SETTINGS,

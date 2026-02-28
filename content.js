@@ -5,6 +5,10 @@
   const INVALID_TRAIL_COLOR = "#ff3b30";
   const STATIONARY_CLICK_PX = 4;
   const RIGHT_MENU_DOUBLECLICK_MS = 350;
+  const ROCKER_SUPPRESS_CLICK_MS = 500;
+  const ROCKER_WHEEL_COOLDOWN_MS = 180;
+  const ROCKER_WHEEL_MIN_DELTA_X = 6;
+  const ROCKER_WHEEL_DOMINANCE_RATIO = 1.3;
   const DEBUG_LOG_MAX_LINES = 220;
   const directionAngles = {
     R: 0,
@@ -32,6 +36,8 @@
   let gestureInvalid = false;
   let blockGestureUntilRelease = false;
   let lastRightStationaryClickAt = 0;
+  let suppressPointerAfterRockerUntil = 0;
+  let lastRockerWheelAt = 0;
   let debugPanel = null;
   let debugLogBody = null;
   let debugLogLines = [];
@@ -240,6 +246,43 @@
     return buttonCode === getConfiguredMouseButtonCode();
   }
 
+  function isMiddleButtonPressed(buttonMask) {
+    return (buttonMask & 4) !== 0;
+  }
+
+  function getRockerActionForButton(buttonCode) {
+    if (buttonCode === 0) return settings.rockerMiddleLeftAction;
+    if (buttonCode === 2) return settings.rockerMiddleRightAction;
+    return "none";
+  }
+
+  function isRockerMouseDown(event) {
+    if (event.button !== 0 && event.button !== 2) return false;
+    return isMiddleButtonPressed(event.buttons);
+  }
+
+  function getRockerActionForWheelDelta(deltaX) {
+    if (deltaX < 0) return settings.rockerMiddleLeftAction;
+    if (deltaX > 0) return settings.rockerMiddleRightAction;
+    return "none";
+  }
+
+  function isLikelyRockerWheelEvent(event) {
+    const absX = Math.abs(event.deltaX);
+    const absY = Math.abs(event.deltaY);
+    if (absX < ROCKER_WHEEL_MIN_DELTA_X) return false;
+    if (absX < absY * ROCKER_WHEEL_DOMINANCE_RATIO) return false;
+    return true;
+  }
+
+  function suppressPointerEventsAfterRocker() {
+    suppressPointerAfterRockerUntil = Date.now() + ROCKER_SUPPRESS_CLICK_MS;
+  }
+
+  function shouldSuppressPointerAfterRocker() {
+    return Date.now() <= suppressPointerAfterRockerUntil;
+  }
+
   function isModifierSatisfied(event) {
     switch (settings.triggerModifier) {
       case "alt":
@@ -280,7 +323,7 @@
     applyTrailStyle();
     syncDebugPanelVisibility();
     appendDebugLog(
-      `Settings loaded: minSegmentPx=${settings.minSegmentPx}, inaccuracy=${settings.inaccuracyDegrees}°, trigger=${settings.triggerMouseButton}`
+      `Settings loaded: minSegmentPx=${settings.minSegmentPx}, inaccuracy=${settings.inaccuracyDegrees}°, trigger=${settings.triggerMouseButton}, rockerLeft=${settings.rockerMiddleLeftAction}, rockerRight=${settings.rockerMiddleRightAction}`
     );
   }
 
@@ -580,6 +623,22 @@
   }
 
   function onMouseDown(event) {
+    if (isRockerMouseDown(event)) {
+      const action = getRockerActionForButton(event.button);
+      if (action !== "none") {
+        if (tracking) cancelGesture();
+        suppressPointerEventsAfterRocker();
+        suppressNextContextMenu = true;
+        event.preventDefault();
+        event.stopPropagation();
+        appendDebugLog(
+          `Middle rocker action fired: ${event.button === 0 ? "left" : "right"} -> ${action}`
+        );
+        sendGestureAction(action);
+        return;
+      }
+    }
+
     if (!isMatchingMouseButton(event.button)) return;
     if (!isModifierSatisfied(event)) {
       appendDebugLog(`Mouse down ignored: modifier '${settings.triggerModifier}' not held.`);
@@ -655,6 +714,12 @@
   }
 
   function onContextMenu(event) {
+    if (shouldSuppressPointerAfterRocker()) {
+      event.preventDefault();
+      appendDebugLog("Context menu suppressed after middle rocker.");
+      return;
+    }
+
     if (suppressNextContextMenu) {
       event.preventDefault();
       suppressNextContextMenu = false;
@@ -668,6 +733,40 @@
       appendDebugLog("Context menu suppressed while tracking gesture.");
       return;
     }
+  }
+
+  function onClick(event) {
+    if (!shouldSuppressPointerAfterRocker()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    appendDebugLog("Click suppressed after middle rocker.");
+  }
+
+  function onAuxClick(event) {
+    if (!shouldSuppressPointerAfterRocker()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    appendDebugLog("Aux click suppressed after middle rocker.");
+  }
+
+  function onWheel(event) {
+    if (!isLikelyRockerWheelEvent(event)) return;
+    const now = Date.now();
+    if (now - lastRockerWheelAt < ROCKER_WHEEL_COOLDOWN_MS) return;
+
+    const action = getRockerActionForWheelDelta(event.deltaX);
+    if (action === "none") return;
+
+    if (tracking) cancelGesture();
+    lastRockerWheelAt = now;
+    suppressPointerEventsAfterRocker();
+    suppressNextContextMenu = true;
+    event.preventDefault();
+    event.stopPropagation();
+    appendDebugLog(
+      `Middle rocker wheel action fired: ${event.deltaX < 0 ? "left" : "right"} -> ${action} (deltaX=${event.deltaX.toFixed(2)}, deltaY=${event.deltaY.toFixed(2)})`
+    );
+    sendGestureAction(action);
   }
 
   api.storage.onChanged.addListener((changes, areaName) => {
@@ -699,4 +798,7 @@
     if (document.hidden) cancelGesture();
   });
   window.addEventListener("contextmenu", onContextMenu, true);
+  window.addEventListener("click", onClick, true);
+  window.addEventListener("auxclick", onAuxClick, true);
+  window.addEventListener("wheel", onWheel, { capture: true, passive: false });
 })();
