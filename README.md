@@ -21,7 +21,9 @@ Supported actions include:
 - Toggle maximize window
 - Toggle fullscreen
 
-Configuration:
+Docs and Configuration:
+
+https://github.com/NaviCorpOSS/NaviGestures/wiki
 
 ![Screenshot](docs/config.png)
 
