@@ -21,8 +21,11 @@ Supported actions include:
 - Toggle maximize window
 - Toggle fullscreen
 
-Get it for Firefox:
+Get it for Firefox (and derivatives):
 https://addons.mozilla.org/en-US/firefox/addon/navi-gestures/
+
+Get it for Chrome (and derivatives):
+https://chromewebstore.google.com/detail/navigestures/nkdjcmgaligcghmhkhaonbjnibheldaj
 
 Docs and Configuration: 
 https://github.com/NaviCorpOSS/NaviGestures/wiki
