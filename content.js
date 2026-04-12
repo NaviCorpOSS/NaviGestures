@@ -11,36 +11,10 @@
   const ROCKER_WHEEL_DOMINANCE_RATIO = 1.3;
   const LOCAL_SCROLL_STEP_RATIO = 0.85;
   const DEBUG_LOG_MAX_LINES = 220;
-  const directionAngles = {
-    R: 0,
-    DR: 45,
-    D: 90,
-    DL: 135,
-    L: 180,
-    UL: 225,
-    U: 270,
-    UR: 315
-  };
-  const orderedActions = [
-    "reload",
-    "closeTab",
-    "forward",
-    "back",
-    "newTab",
-    "zoomIn",
-    "zoomOut",
-    "scrollLeft",
-    "scrollRight",
-    "toggleMaximizeWindow",
-    "maximizeWindow",
-    "minimizeWindow",
-    "toggleFullscreen"
-  ];
-
   let settings = common.sanitizeSettings(common.DEFAULT_SETTINGS);
   let tracking = false;
   let path = [];
-  let lastPoint = null;
+  let anchorPoint = null;
   let totalDistance = 0;
   let suppressNextContextMenu = false;
   let trailCanvas = null;
@@ -57,6 +31,10 @@
   let debugLogBody = null;
   let debugLogLines = [];
   let debugCollapsed = false;
+  let gestureHintEl = null;
+  let strokePoints = [];
+  let pathTemplateDeviant = false;
+  let lastTrailInvalidForDraw = false;
 
   function nowTimeLabel() {
     const d = new Date();
@@ -198,14 +176,18 @@
   }
 
   function diffLabel(observed, expected) {
-    const diff = angularDifference(angleForDirection(observed), angleForDirection(expected));
+    const diff = common.angularDifference(
+      common.angleForDirection(observed),
+      common.angleForDirection(expected)
+    );
     return `${observed} vs ${expected} (${diff.toFixed(1)}°)`;
   }
 
   function prefixCompatibilityDetails(observedPath) {
     const observedLen = observedPath.length;
     const details = [];
-    for (const action of orderedActions) {
+    const tol = settings.inaccuracyDegrees;
+    for (const action of common.ACTIONS) {
       const expected = settings.gestures[action] || [];
       if (expected.length < observedLen) {
         details.push(`${action}: too short (${expected.length} < ${observedLen})`);
@@ -213,8 +195,8 @@
       }
       let mismatch = null;
       for (let i = 0; i < observedLen; i += 1) {
-        if (!directionsCompatible(observedPath[i], expected[i])) {
-          mismatch = `${action}: mismatch at ${i + 1} (${diffLabel(observedPath[i], expected[i])}, tol=${settings.inaccuracyDegrees}°)`;
+        if (!common.directionsCompatible(observedPath[i], expected[i], tol)) {
+          mismatch = `${action}: mismatch at ${i + 1} (${diffLabel(observedPath[i], expected[i])}, tol=${tol}°)`;
           break;
         }
       }
@@ -225,7 +207,8 @@
 
   function exactMatchEvaluation(observedPath) {
     const details = [];
-    for (const action of orderedActions) {
+    const tol = settings.inaccuracyDegrees;
+    for (const action of common.ACTIONS) {
       const expected = settings.gestures[action] || [];
       if (expected.length !== observedPath.length) {
         details.push(`${action}: length ${expected.length} != ${observedPath.length}`);
@@ -236,9 +219,12 @@
       for (let i = 0; i < observedPath.length; i += 1) {
         const observed = observedPath[i];
         const wanted = expected[i];
-        const diff = angularDifference(angleForDirection(observed), angleForDirection(wanted));
-        if (diff > settings.inaccuracyDegrees) {
-          details.push(`${action}: reject at ${i + 1} (${diffLabel(observed, wanted)}, tol=${settings.inaccuracyDegrees}°)`);
+        const diff = common.angularDifference(
+          common.angleForDirection(observed),
+          common.angleForDirection(wanted)
+        );
+        if (diff > tol) {
+          details.push(`${action}: reject at ${i + 1} (${diffLabel(observed, wanted)}, tol=${tol}°)`);
           allCompatible = false;
           break;
         }
@@ -382,13 +368,17 @@
 
   function applyTrailStyle() {
     if (!trailCtx) return;
-    trailCtx.lineWidth = settings.trailWidth * trailPixelRatio;
+    const lineW = settings.trailWidth * trailPixelRatio;
+    trailCtx.lineWidth = lineW;
     trailCtx.lineCap = "round";
     trailCtx.lineJoin = "round";
-    const color = gestureInvalid ? INVALID_TRAIL_COLOR : settings.trailColor;
+    const color =
+      gestureInvalid || pathTemplateDeviant ? INVALID_TRAIL_COLOR : settings.trailColor;
     trailCtx.strokeStyle = color;
     trailCtx.shadowColor = color;
-    trailCtx.shadowBlur = 5 * trailPixelRatio;
+    trailCtx.shadowBlur = Math.max(0.5, lineW * 0.55);
+    trailCtx.shadowOffsetX = 0;
+    trailCtx.shadowOffsetY = 0;
   }
 
   function clearTrail() {
@@ -419,6 +409,24 @@
     trailLastPoint = { x, y };
   }
 
+  function redrawTrailFromStrokePoints() {
+    if (!trailCtx || strokePoints.length < 1) return;
+    trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
+    applyTrailStyle();
+    const pts = strokePoints.map((p) => toTrailPoint(p.x, p.y));
+    trailCtx.beginPath();
+    trailCtx.moveTo(pts[0].x * trailPixelRatio, pts[0].y * trailPixelRatio);
+    for (let i = 1; i < pts.length; i += 1) {
+      trailCtx.lineTo(pts[i].x * trailPixelRatio, pts[i].y * trailPixelRatio);
+    }
+    trailCtx.stroke();
+    trailLastPoint = pts[pts.length - 1];
+  }
+
+  function updatePathTemplateDeviantFlag() {
+    pathTemplateDeviant = !common.anyConfiguredGestureStillPossible(path, settings, strokePoints);
+  }
+
   function finishTrail() {
     if (clearTrailTimer) clearTimeout(clearTrailTimer);
     clearTrailTimer = setTimeout(() => {
@@ -427,12 +435,91 @@
     }, 160);
   }
 
+  function ensureGestureHint() {
+    if (gestureHintEl || !document.documentElement) return;
+    gestureHintEl = document.createElement("div");
+    gestureHintEl.setAttribute("aria-live", "polite");
+    gestureHintEl.style.position = "fixed";
+    gestureHintEl.style.zIndex = "2147483646";
+    gestureHintEl.style.pointerEvents = "none";
+    gestureHintEl.style.maxWidth = "min(280px, 92vw)";
+    gestureHintEl.style.padding = "6px 12px";
+    gestureHintEl.style.borderRadius = "999px";
+    gestureHintEl.style.fontFamily =
+      'system-ui, -apple-system, "Segoe UI", "Roboto", "Helvetica Neue", sans-serif';
+    gestureHintEl.style.fontSize = "13px";
+    gestureHintEl.style.fontWeight = "600";
+    gestureHintEl.style.letterSpacing = "0.06em";
+    gestureHintEl.style.textTransform = "uppercase";
+    gestureHintEl.style.color = "#e8f4ff";
+    gestureHintEl.style.background = "rgba(6, 10, 22, 0.62)";
+    gestureHintEl.style.border = "1px solid rgba(200, 220, 255, 0.35)";
+    gestureHintEl.style.boxShadow = "0 2px 16px rgba(0,0,0,0.45)";
+    gestureHintEl.style.textShadow =
+      "0 0 8px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.95), 1px 0 2px rgba(0,0,0,0.85), -1px 0 2px rgba(0,0,0,0.85)";
+    gestureHintEl.style.visibility = "hidden";
+    document.documentElement.appendChild(gestureHintEl);
+  }
+
+  function removeGestureHint() {
+    if (gestureHintEl && gestureHintEl.parentNode) {
+      gestureHintEl.parentNode.removeChild(gestureHintEl);
+    }
+    gestureHintEl = null;
+  }
+
+  function syncGestureHint(clientX, clientY) {
+    if (!gestureHintEl) return;
+    const offsetX = 14;
+    const offsetY = 28;
+    gestureHintEl.style.left = `${clientX + offsetX}px`;
+    gestureHintEl.style.top = `${clientY + offsetY}px`;
+
+    const pathHint =
+      common.hasAnyPathTemplate(settings) && strokePoints.length >= 2
+        ? common.livePathTemplateHintDisplay(path, strokePoints, settings)
+        : "";
+    const tokenHintRaw = path.length ? common.liveGestureLabel(path, settings) : "";
+    const tokenHint =
+      common.hasAnyPathTemplate(settings) && tokenHintRaw === "\u2014" ? "" : tokenHintRaw;
+    const hintText = pathHint || tokenHint;
+
+    if (!hintText && !gestureInvalid && !pathTemplateDeviant) {
+      gestureHintEl.textContent = "";
+      gestureHintEl.style.visibility = "hidden";
+      return;
+    }
+    gestureHintEl.style.visibility = "visible";
+    if (gestureInvalid || pathTemplateDeviant) {
+      gestureHintEl.style.borderColor = "rgba(255, 120, 120, 0.5)";
+      gestureHintEl.textContent = hintText || "\u2014";
+    } else {
+      gestureHintEl.style.borderColor = "rgba(200, 220, 255, 0.35)";
+      gestureHintEl.textContent = hintText;
+    }
+    const rect = gestureHintEl.getBoundingClientRect();
+    let left = clientX + offsetX;
+    let top = clientY + offsetY;
+    if (rect.right > window.innerWidth - 8) {
+      left = Math.max(8, window.innerWidth - rect.width - 8);
+    }
+    if (rect.bottom > window.innerHeight - 8) {
+      top = Math.max(8, clientY - offsetY - rect.height);
+    }
+    gestureHintEl.style.left = `${left}px`;
+    gestureHintEl.style.top = `${top}px`;
+  }
+
   function beginGestureTracking(startX, startY) {
     tracking = true;
     gestureInvalid = false;
+    pathTemplateDeviant = false;
+    lastTrailInvalidForDraw = false;
     path = [];
+    strokePoints = [{ x: startX, y: startY }];
     totalDistance = 0;
-    lastPoint = { x: startX, y: startY };
+    anchorPoint = { x: startX, y: startY };
+    ensureGestureHint();
     const startPoint = toTrailPoint(startX, startY);
     startTrail(startPoint.x, startPoint.y);
     applyTrailStyle();
@@ -442,9 +529,13 @@
   function resetGestureState() {
     tracking = false;
     path = [];
-    lastPoint = null;
+    strokePoints = [];
+    anchorPoint = null;
     totalDistance = 0;
     gestureInvalid = false;
+    pathTemplateDeviant = false;
+    lastTrailInvalidForDraw = false;
+    removeGestureHint();
   }
 
   function completeGesture(allowAction) {
@@ -452,38 +543,62 @@
     const observedPath = [...path];
     const observedDistance = totalDistance;
     const wasInvalid = gestureInvalid;
+    const pointsSnap = strokePoints.map((p) => ({ x: p.x, y: p.y }));
     resetGestureState();
     finishTrail();
 
     appendDebugLog(
-      `Gesture end: allowAction=${allowAction}, path=${observedPath.join(" -> ") || "(none)"}, distance=${observedDistance.toFixed(1)}, invalid=${wasInvalid}`
+      `Gesture end: allowAction=${allowAction}, path=${observedPath.join(" -> ") || "(none)"}, distance=${observedDistance.toFixed(1)}, invalid=${wasInvalid}, strokePts=${pointsSnap.length}`
     );
     if (!allowAction) {
       appendDebugLog("Gesture ignored: release button does not match trigger.");
       return;
     }
-    if (!observedPath.length) {
-      appendDebugLog("Gesture ignored: no direction segments captured.");
-      return;
-    }
-    if (observedDistance < settings.minSegmentPx) {
-      appendDebugLog(
-        `Gesture ignored: distance ${observedDistance.toFixed(1)} < minSegmentPx ${settings.minSegmentPx}.`
-      );
-      return;
-    }
-    if (wasInvalid) {
+
+    const pathMatch = common.matchBestPathTemplate(pointsSnap, settings);
+    const tokenAction = common.detectExactAction(observedPath, settings);
+
+    if (wasInvalid && !pathMatch) {
       appendDebugLog("Gesture rejected: path was previously marked invalid.");
       return;
     }
 
-    appendDebugLog(`Exact matching checks: ${exactMatchEvaluation(observedPath).join(" | ")}`);
-    const action = detectExactAction(observedPath);
+    if (!pathMatch) {
+      const strokeLen = common.polylineLength(pointsSnap);
+      if (!observedPath.length) {
+        if (strokeLen < common.PATH_MATCH_MIN_STROKE_PX) {
+          appendDebugLog("Gesture ignored: stroke too short.");
+          return;
+        }
+        appendDebugLog(
+          "Gesture ignored: no direction steps and no shape match (smooth curves need a taught template + Save in settings)."
+        );
+        return;
+      }
+      if (observedDistance < settings.minSegmentPx) {
+        appendDebugLog(
+          `Gesture ignored: distance ${observedDistance.toFixed(1)} < minSegmentPx ${settings.minSegmentPx}.`
+        );
+        return;
+      }
+    }
+
+    let action = null;
+    if (pathMatch) {
+      action = pathMatch.action;
+      appendDebugLog(`Path template match: ${action} (score=${pathMatch.score.toFixed(3)})`);
+    } else {
+      appendDebugLog(`Exact matching checks: ${exactMatchEvaluation(observedPath).join(" | ")}`);
+      if (tokenAction) {
+        action = tokenAction;
+        appendDebugLog(`Token gesture match: ${action}`);
+      }
+    }
+
     if (action) {
-      appendDebugLog(`Action accepted: ${action}`);
       sendGestureAction(action);
       if (settings.triggerMouseButton === "right") suppressNextContextMenu = true;
-    } else if (observedDistance >= settings.minSegmentPx * 1.5) {
+    } else if (pathMatch === null && observedDistance >= settings.minSegmentPx * 1.5) {
       appendDebugLog("No exact action match, suppressing context menu due to substantial movement.");
       if (settings.triggerMouseButton === "right") suppressNextContextMenu = true;
     } else {
@@ -500,133 +615,6 @@
     resetGestureState();
     clearTrail();
     appendDebugLog("Gesture cancelled.");
-  }
-
-  function angleForDirection(direction) {
-    return directionAngles[direction];
-  }
-
-  function angularDifference(a, b) {
-    const diff = Math.abs(a - b);
-    return Math.min(diff, 360 - diff);
-  }
-
-  function vectorToDirection(dx, dy) {
-    const angle = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
-    const sectors = ["R", "DR", "D", "DL", "L", "UL", "U", "UR"];
-    const index = Math.round(angle / 45) % 8;
-    return sectors[index];
-  }
-
-  function directionVector(direction) {
-    switch (direction) {
-      case "R":
-        return { x: 1, y: 0 };
-      case "DR":
-        return { x: 1, y: 1 };
-      case "D":
-        return { x: 0, y: 1 };
-      case "DL":
-        return { x: -1, y: 1 };
-      case "L":
-        return { x: -1, y: 0 };
-      case "UL":
-        return { x: -1, y: -1 };
-      case "U":
-        return { x: 0, y: -1 };
-      case "UR":
-        return { x: 1, y: -1 };
-      default:
-        return { x: 0, y: 0 };
-    }
-  }
-
-  function directionFromVector(x, y) {
-    if (x === 1 && y === 0) return "R";
-    if (x === 1 && y === 1) return "DR";
-    if (x === 0 && y === 1) return "D";
-    if (x === -1 && y === 1) return "DL";
-    if (x === -1 && y === 0) return "L";
-    if (x === -1 && y === -1) return "UL";
-    if (x === 0 && y === -1) return "U";
-    if (x === 1 && y === -1) return "UR";
-    return null;
-  }
-
-  function isCardinal(direction) {
-    return direction === "R" || direction === "D" || direction === "L" || direction === "U";
-  }
-
-  function collapseBridgeDiagonal(pathDirections) {
-    if (pathDirections.length < 3) return false;
-    const aIndex = pathDirections.length - 3;
-    const bIndex = pathDirections.length - 2;
-    const cIndex = pathDirections.length - 1;
-    const a = pathDirections[aIndex];
-    const b = pathDirections[bIndex];
-    const c = pathDirections[cIndex];
-    if (!isCardinal(a) || !isCardinal(c) || a === c) return false;
-
-    const aVec = directionVector(a);
-    const cVec = directionVector(c);
-    // A hard corner must switch axes.
-    if (aVec.x === cVec.x || aVec.y === cVec.y) return false;
-
-    const bridge = directionFromVector(aVec.x + cVec.x, aVec.y + cVec.y);
-    if (!bridge || b !== bridge) return false;
-
-    pathDirections.splice(bIndex, 1);
-    return true;
-  }
-
-  function directionsCompatible(observed, expected) {
-    if (observed === expected) return true;
-    const diff = angularDifference(angleForDirection(observed), angleForDirection(expected));
-    return diff <= settings.inaccuracyDegrees;
-  }
-
-  function pathCanStillMatchAnyAction(observedPath) {
-    for (const action of orderedActions) {
-      const expected = settings.gestures[action] || [];
-      if (expected.length < observedPath.length) continue;
-      let allCompatible = true;
-      for (let i = 0; i < observedPath.length; i += 1) {
-        if (!directionsCompatible(observedPath[i], expected[i])) {
-          allCompatible = false;
-          break;
-        }
-      }
-      if (allCompatible) return true;
-    }
-    return false;
-  }
-
-  function detectExactAction(observedPath) {
-    let bestAction = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    for (const action of orderedActions) {
-      const expected = settings.gestures[action] || [];
-      if (expected.length !== observedPath.length) continue;
-      let allCompatible = true;
-      let score = 0;
-      for (let i = 0; i < observedPath.length; i += 1) {
-        const observed = observedPath[i];
-        const wanted = expected[i];
-        const diff = angularDifference(angleForDirection(observed), angleForDirection(wanted));
-        if (diff > settings.inaccuracyDegrees) {
-          allCompatible = false;
-          break;
-        }
-        // Prefer the closest gesture when multiple are within tolerance.
-        score += diff;
-      }
-      if (allCompatible && score < bestScore) {
-        bestScore = score;
-        bestAction = action;
-      }
-    }
-    return bestAction;
   }
 
   function sendGestureAction(action) {
@@ -689,40 +677,62 @@
 
     blockGestureUntilRelease = false;
     beginGestureTracking(event.clientX, event.clientY);
+    // Linux (and some toolkits) open the menu from default right-button mousedown;
+    // preventDefault here reliably defers the menu until the double–right-click bypass path.
+    if (settings.triggerMouseButton === "right") {
+      event.preventDefault();
+    }
   }
 
   function onMouseMove(event) {
-    if (!tracking || !lastPoint) return;
+    if (!tracking || !anchorPoint) return;
 
     if ((event.buttons & getConfiguredMouseButtonMask()) === 0) {
       completeGesture(false);
       return;
     }
-    const trailPoint = toTrailPoint(event.clientX, event.clientY);
-    extendTrail(trailPoint.x, trailPoint.y);
-    const dx = event.clientX - lastPoint.x;
-    const dy = event.clientY - lastPoint.y;
-    const dist = Math.hypot(dx, dy);
-    totalDistance += dist;
+    strokePoints.push({ x: event.clientX, y: event.clientY });
 
-    if (dist < settings.minSegmentPx) return;
+    const state = { anchorX: anchorPoint.x, anchorY: anchorPoint.y };
+    const { stepDist, pushed } = common.processGestureMove(
+      state,
+      event.clientX,
+      event.clientY,
+      settings.minSegmentPx,
+      path
+    );
+    totalDistance += stepDist;
+    anchorPoint = { x: state.anchorX, y: state.anchorY };
 
-    const dir = vectorToDirection(dx, dy);
-    if (path[path.length - 1] !== dir) {
-      path.push(dir);
+    if (pushed) {
       appendDebugLog(
-        `Direction added: ${dir} (dx=${dx.toFixed(1)}, dy=${dy.toFixed(1)}, step=${dist.toFixed(1)}), path=${path.join(" -> ")}`
+        `Direction added: path=${path.join(" -> ")}, step=${stepDist.toFixed(1)}`
       );
-      if (collapseBridgeDiagonal(path)) {
-        appendDebugLog(`Path smoothed: collapsed bridge diagonal, path=${path.join(" -> ")}`);
-      }
-      if (!gestureInvalid && !pathCanStillMatchAnyAction(path)) {
-        gestureInvalid = true;
-        applyTrailStyle();
-        appendDebugLog(`Path invalidated: ${prefixCompatibilityDetails(path).join(" | ")}`);
+      if (!common.hasAnyPathTemplate(settings)) {
+        const stillStrict = common.pathCanStillMatchAnyAction(path, settings);
+        const stillLoose = common.pathCanStillMatchAnyAction(
+          path,
+          settings,
+          common.PREFIX_LOOSE_TOLERANCE_DEG
+        );
+        if (!gestureInvalid && !stillStrict && !stillLoose) {
+          gestureInvalid = true;
+          appendDebugLog(`Path invalidated: ${prefixCompatibilityDetails(path).join(" | ")}`);
+        }
       }
     }
-    lastPoint = { x: event.clientX, y: event.clientY };
+
+    const trailPoint = toTrailPoint(event.clientX, event.clientY);
+    updatePathTemplateDeviantFlag();
+    const invCombined = gestureInvalid || pathTemplateDeviant;
+    applyTrailStyle();
+    if (invCombined !== lastTrailInvalidForDraw && strokePoints.length >= 2) {
+      lastTrailInvalidForDraw = invCombined;
+      redrawTrailFromStrokePoints();
+    } else {
+      extendTrail(trailPoint.x, trailPoint.y);
+    }
+    syncGestureHint(event.clientX, event.clientY);
   }
 
   function onMouseUp(event) {
@@ -808,7 +818,6 @@
   });
 
   window.addEventListener("DOMContentLoaded", syncDebugPanelVisibility, { once: true });
-  loadSettings();
   if (document.documentElement) {
     createTrailCanvas();
   } else {
@@ -819,16 +828,22 @@
     window.visualViewport.addEventListener("resize", resizeTrailCanvas);
     window.visualViewport.addEventListener("scroll", resizeTrailCanvas);
   }
-  window.addEventListener("mousedown", onMouseDown, true);
-  window.addEventListener("mousemove", onMouseMove, true);
-  window.addEventListener("mouseup", onMouseUp, true);
-  window.addEventListener("blur", cancelGesture);
-  window.addEventListener("pagehide", cancelGesture);
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) cancelGesture();
-  });
-  window.addEventListener("contextmenu", onContextMenu, true);
-  window.addEventListener("click", onClick, true);
-  window.addEventListener("auxclick", onAuxClick, true);
-  window.addEventListener("wheel", onWheel, { capture: true, passive: false });
+
+  async function attachGestureListenersAfterSettings() {
+    await loadSettings();
+    window.addEventListener("mousedown", onMouseDown, true);
+    window.addEventListener("mousemove", onMouseMove, true);
+    window.addEventListener("mouseup", onMouseUp, true);
+    window.addEventListener("blur", cancelGesture);
+    window.addEventListener("pagehide", cancelGesture);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) cancelGesture();
+    });
+    window.addEventListener("contextmenu", onContextMenu, true);
+    window.addEventListener("click", onClick, true);
+    window.addEventListener("auxclick", onAuxClick, true);
+    window.addEventListener("wheel", onWheel, { capture: true, passive: false });
+  }
+
+  void attachGestureListenersAfterSettings();
 })();

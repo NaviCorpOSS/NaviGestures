@@ -3,159 +3,435 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>NaviGestures - Settings</title>
+    <title>NaviGestures — Settings</title>
     <style>
       :root {
-        color-scheme: light dark;
+        color-scheme: dark;
+        --bg: #070a12;
+        --bg-elev: rgba(12, 18, 34, 0.92);
+        --line: #1d2945;
+        --text: #d6e4ff;
+        --muted: #8ea4d3;
+        --cyan: #31d0ff;
+        --violet: #9b73ff;
+        --green: #5cffb0;
+        --radius: 14px;
+        --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       }
+
+      * {
+        box-sizing: border-box;
+      }
+
       body {
-        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-        margin: 24px;
+        margin: 0;
+        font-family: var(--font);
+        background: radial-gradient(1200px 700px at 20% -10%, rgba(49, 208, 255, 0.2), transparent 55%),
+          radial-gradient(1000px 600px at 85% 0%, rgba(155, 115, 255, 0.18), transparent 50%), var(--bg);
+        color: var(--text);
+        min-height: 100%;
+        padding: 28px 22px 48px;
+      }
+
+      .shell {
         max-width: 760px;
+        margin: 0 auto;
       }
+
+      .top {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 22px;
+      }
+
+      .brand-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--cyan), var(--violet));
+        box-shadow: 0 0 20px rgba(49, 208, 255, 0.9);
+      }
+
       h1 {
-        font-size: 1.3rem;
-        margin: 0 0 16px;
+        margin: 0;
+        font-size: 1.05rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        font-weight: 700;
+        color: #f2f7ff;
       }
-      p {
-        margin: 0 0 10px;
-      }
+
       .card {
-        border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-        border-radius: 10px;
-        padding: 14px;
-        margin-bottom: 14px;
+        border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+        border-radius: var(--radius);
+        background: var(--bg-elev);
+        padding: 18px;
+        margin-bottom: 16px;
+        box-shadow: 0 14px 35px rgba(0, 0, 0, 0.45);
       }
+
+      .card p {
+        margin: 0 0 10px;
+        line-height: 1.5;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .card p:last-child {
+        margin-bottom: 0;
+      }
+
+      a {
+        color: var(--cyan);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+
+      a:hover {
+        color: color-mix(in srgb, var(--cyan) 85%, white);
+      }
+
+      code {
+        padding: 2px 6px;
+        border-radius: 6px;
+        font-size: 0.88em;
+        background: rgba(8, 15, 31, 0.75);
+        border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+        color: #c8d8f8;
+      }
+
       .row {
         display: grid;
-        grid-template-columns: 180px 1fr;
-        gap: 10px;
+        grid-template-columns: 200px 1fr;
+        gap: 12px;
         align-items: center;
-        margin-bottom: 10px;
+        margin-bottom: 12px;
       }
+
+      label {
+        font-size: 0.78rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
       input[type="text"],
       input[type="number"],
       select {
         width: 100%;
-        box-sizing: border-box;
-        padding: 8px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: rgba(7, 10, 18, 0.88);
+        color: var(--text);
+        font-size: 0.9rem;
       }
-      input[type="checkbox"] {
+
+      input[type="checkbox"].inline-checkbox {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--cyan);
+        cursor: pointer;
         justify-self: start;
         margin: 0;
       }
+
       .color-inputs {
         display: grid;
         grid-template-columns: 46px 1fr;
         gap: 8px;
         align-items: center;
       }
+
       input[type="color"] {
         width: 46px;
-        height: 36px;
-        border: 0;
-        background: transparent;
-        padding: 0;
-      }
-      .buttons {
-        display: flex;
-        gap: 10px;
-        margin-top: 14px;
-      }
-      button {
-        padding: 8px 12px;
+        height: 40px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(7, 10, 18, 0.88);
+        padding: 2px;
         cursor: pointer;
       }
-      #status {
-        margin-top: 10px;
-        min-height: 1.2rem;
+
+      .buttons {
+        display: flex;
+        gap: 12px;
+        margin-top: 16px;
       }
-      code {
-        padding: 2px 4px;
-        border-radius: 4px;
-        background: color-mix(in srgb, currentColor 14%, transparent);
+
+      button {
+        cursor: pointer;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        padding: 10px 18px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        background: linear-gradient(90deg, rgba(49, 208, 255, 0.22), rgba(155, 115, 255, 0.2));
+        color: var(--text);
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      button:hover {
+        border-color: color-mix(in srgb, var(--cyan) 55%, var(--line));
+        box-shadow: 0 0 14px rgba(49, 208, 255, 0.2);
+      }
+
+      button.secondary {
+        background: rgba(8, 15, 31, 0.65);
+      }
+
+      #status {
+        margin-top: 12px;
+        min-height: 1.2rem;
+        font-size: 0.88rem;
+        color: var(--green);
+      }
+
+      #status.err {
+        color: #ff8a8a;
+      }
+
+      .gesture-input-wrap {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+      }
+
+      .gesture-preview-btn {
+        display: block;
+        padding: 0;
+        margin: 0;
+        border: none;
+        background: transparent;
+        border-radius: 12px;
+        cursor: pointer;
+        line-height: 0;
+      }
+
+      .gesture-preview-btn:focus-visible {
+        outline: 2px solid var(--cyan);
+        outline-offset: 2px;
+      }
+
+      #gestureRows > .row {
+        grid-template-columns: minmax(220px, 0.42fr) 1fr;
+        align-items: center;
+      }
+
+      #gestureRows > .row > label {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: var(--text);
+        line-height: 1.35;
+      }
+
+      .gesture-preview-svg {
+        width: 264px;
+        height: 264px;
+        flex-shrink: 0;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(7, 10, 18, 0.88);
+        display: block;
+      }
+
+      .gesture-preview-svg.gesture-preview-empty .gesture-path {
+        stroke: var(--muted);
+        stroke-dasharray: 4 3;
+        opacity: 0.65;
+      }
+
+      .gesture-preview-svg .gesture-start {
+        vector-effect: non-scaling-stroke;
+      }
+
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(4px);
+      }
+
+      .modal-overlay[hidden] {
+        display: none !important;
+      }
+
+      .modal-card {
+        width: 100%;
+        max-width: 420px;
+        border-radius: var(--radius);
+        border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+        background: var(--bg-elev);
+        box-shadow: 0 14px 35px rgba(0, 0, 0, 0.45);
+        padding: 18px;
+      }
+
+      .modal-card h2 {
+        margin: 0 0 10px;
+        font-size: 0.9rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #e8f0ff;
+        font-weight: 600;
+      }
+
+      .teach-hint {
+        margin: 0 0 12px;
+        font-size: 0.82rem;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+
+      #teachCanvas {
+        display: block;
+        width: 100%;
+        height: 220px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: rgba(7, 10, 18, 0.88);
+        cursor: crosshair;
+        touch-action: none;
+      }
+
+      .teach-preview {
+        margin: 10px 0 0;
+        font-size: 0.78rem;
+        color: var(--muted);
+        min-height: 1.2rem;
+        font-family: ui-monospace, monospace;
+      }
+
+      .modal-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        margin-top: 14px;
+      }
+
+      .modal-actions-end {
+        display: flex;
+        gap: 10px;
+        margin-left: auto;
       }
     </style>
   </head>
   <body>
-    <div class="card">
-      <p>NaviGestures is a free and open-source extension focused on privacy and minimal resource usage.</p>
-      <p>There are no ads, no tracking, and no telemetry or data collection of any kind. Ever.</p>
-      <p>Source code: <a href="https://github.com/NaviCorpOSS/NaviGestures">https://github.com/NaviCorpOSS/NaviGestures</a></p>
-      <p>Documentation: <a href="https://github.com/NaviCorpOSS/NaviGestures/wiki">https://github.com/NaviCorpOSS/NaviGestures/wiki</a></p> 
-      <p>Homepage: <a href="https://oss.navicorp.net/NaviGestures">https://oss.navicorp.net/NaviGestures</a></p>
-    </div>
-
-    <div class="card">
-      <p>Use direction tokens: <code>U D L R UL UR DL DR</code></p>
-      <p>Examples: <code>D U</code>, <code>UR</code>, <code>D,R</code></p>
-    </div>
-
-    <form id="settingsForm" class="card">
-      <div id="gestureRows"></div>
-
-      <div class="row">
-        <label for="minSegmentPx">Movement threshold (px)</label>
-        <input id="minSegmentPx" type="number" min="8" max="80" step="1" />
+    <div class="shell">
+      <div class="top">
+        <span class="brand-dot" aria-hidden="true"></span>
+        <h1>NaviGestures — Settings</h1>
       </div>
 
-      <div class="row">
-        <label for="inaccuracyDegrees">Inaccuracy tolerance (deg)</label>
-        <input id="inaccuracyDegrees" type="number" min="10" max="85" step="1" />
+      <div class="card">
+        <p>NaviGestures is a free and open-source extension focused on privacy and minimal resource usage.</p>
+        <p>There are no ads, no tracking, and no telemetry or data collection of any kind. Ever.</p>
+        <p>Source code: <a href="https://github.com/NaviCorpOSS/NaviGestures">https://github.com/NaviCorpOSS/NaviGestures</a></p>
+        <p>Documentation: <a href="https://github.com/NaviCorpOSS/NaviGestures/wiki">https://github.com/NaviCorpOSS/NaviGestures/wiki</a></p>
+        <p>Homepage: <a href="https://oss.navicorp.net/NaviGestures">https://oss.navicorp.net/NaviGestures</a></p>
       </div>
 
-      <div class="row">
-        <label for="trailColorHex">Trail color</label>
-        <div class="color-inputs">
-          <input id="trailColorPicker" type="color" />
-          <input id="trailColorHex" type="text" placeholder="#24a1ff" />
+      <div class="card">
+        <p>
+          Each action uses a taught shape or the default direction path. <strong>Click a gesture preview</strong> to
+          record, replace, or restore the default; the diagram shows direction from the start dot. Press
+          <strong>Save</strong> so tabs pick up changes.
+        </p>
+      </div>
+
+      <form id="settingsForm" class="card">
+        <div id="gestureRows"></div>
+
+        <div class="row">
+          <label for="minSegmentPx">Movement threshold (px)</label>
+          <input id="minSegmentPx" type="number" min="8" max="80" step="1" />
+        </div>
+
+        <div class="row">
+          <label for="inaccuracyDegrees">Inaccuracy tolerance (deg)</label>
+          <input id="inaccuracyDegrees" type="number" min="10" max="85" step="1" />
+        </div>
+
+        <div class="row">
+          <label for="trailColorHex">Trail color</label>
+          <div class="color-inputs">
+            <input id="trailColorPicker" type="color" />
+            <input id="trailColorHex" type="text" placeholder="#24a1ff" />
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="trailWidth">Trail width (px)</label>
+          <input id="trailWidth" type="number" min="1" max="16" step="1" />
+        </div>
+
+        <div class="row">
+          <label for="triggerMouseButton">Trigger mouse button</label>
+          <select id="triggerMouseButton">
+            <option value="right">Right mouse button</option>
+            <option value="middle">Middle mouse button</option>
+          </select>
+        </div>
+
+        <div class="row">
+          <label for="triggerModifier">Required modifier key</label>
+          <select id="triggerModifier">
+            <option value="unset">Unset (none)</option>
+            <option value="alt">Alt / Meta</option>
+            <option value="shift">Shift</option>
+            <option value="ctrl">Control</option>
+          </select>
+        </div>
+
+        <div class="row">
+          <label for="rockerMiddleLeftAction">Middle-rock left action</label>
+          <select id="rockerMiddleLeftAction"></select>
+        </div>
+
+        <div class="row">
+          <label for="rockerMiddleRightAction">Middle-rock right action</label>
+          <select id="rockerMiddleRightAction"></select>
+        </div>
+
+        <div class="row">
+          <label for="showDebugLogWindow">Show debug log window</label>
+          <input id="showDebugLogWindow" type="checkbox" class="inline-checkbox" />
+        </div>
+
+        <div class="buttons">
+          <button type="submit">Save</button>
+          <button id="resetBtn" type="button" class="secondary">Reset defaults</button>
+        </div>
+        <div id="status"></div>
+      </form>
+    </div>
+
+    <div id="teachModal" class="modal-overlay" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="teachModalTitle">
+        <h2 id="teachModalTitle">Edit gesture</h2>
+        <p class="teach-hint">
+          Press and draw with your pointer. Release when finished. The preview uses your current movement threshold from the form below (save settings to persist).
+        </p>
+        <canvas id="teachCanvas" width="360" height="220"></canvas>
+        <p id="teachPreview" class="teach-preview"></p>
+        <div class="modal-actions">
+          <button type="button" id="teachRestoreDefault" class="secondary">Use default path</button>
+          <div class="modal-actions-end">
+            <button type="button" id="teachCancel" class="secondary">Cancel</button>
+            <button type="button" id="teachSave">Save gesture</button>
+          </div>
         </div>
       </div>
-
-      <div class="row">
-        <label for="trailWidth">Trail width (px)</label>
-        <input id="trailWidth" type="number" min="1" max="16" step="1" />
-      </div>
-
-      <div class="row">
-        <label for="triggerMouseButton">Trigger mouse button</label>
-        <select id="triggerMouseButton">
-          <option value="right">Right mouse button</option>
-          <option value="middle">Middle mouse button</option>
-        </select>
-      </div>
-
-      <div class="row">
-        <label for="triggerModifier">Required modifier key</label>
-        <select id="triggerModifier">
-          <option value="unset">Unset (none)</option>
-          <option value="alt">Alt / Meta</option>
-          <option value="shift">Shift</option>
-          <option value="ctrl">Control</option>
-        </select>
-      </div>
-
-      <div class="row">
-        <label for="rockerMiddleLeftAction">Middle-rock left action</label>
-        <select id="rockerMiddleLeftAction"></select>
-      </div>
-
-      <div class="row">
-        <label for="rockerMiddleRightAction">Middle-rock right action</label>
-        <select id="rockerMiddleRightAction"></select>
-      </div>
-
-      <div class="row">
-        <label for="showDebugLogWindow">Show debug log window</label>
-        <input id="showDebugLogWindow" type="checkbox" />
-      </div>
-
-      <div class="buttons">
-        <button type="submit">Save</button>
-        <button id="resetBtn" type="button">Reset defaults</button>
-      </div>
-      <div id="status"></div>
-    </form>
+    </div>
 
     <script src="common.js"></script>
     <script src="options.js"></script>
