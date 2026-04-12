@@ -2,7 +2,6 @@
   const api = typeof browser !== "undefined" ? browser : chrome;
   const isBrowserApi = typeof browser !== "undefined";
   const common = globalThis.NaviGesturesCommon;
-  const INVALID_TRAIL_COLOR = "#ff3b30";
   const STATIONARY_CLICK_PX = 4;
   const RIGHT_MENU_DOUBLECLICK_MS = 350;
   const ROCKER_SUPPRESS_CLICK_MS = 500;
@@ -11,6 +10,12 @@
   const ROCKER_WHEEL_DOMINANCE_RATIO = 1.3;
   const LOCAL_SCROLL_STEP_RATIO = 0.85;
   const DEBUG_LOG_MAX_LINES = 220;
+  /** Fixed layout size; visual size stays constant via inverse page-zoom scale on the host. */
+  const DEBUG_PANEL_WIDTH_PX = 380;
+  const DEBUG_PANEL_MAX_HEIGHT_PX = 400;
+  const GESTURE_HINT_MAX_WIDTH_PX = 280;
+  const HINT_BORDER_DEFAULT = "rgba(200, 230, 255, 0.38)";
+  const HINT_BORDER_MATCHED = "rgba(92, 224, 124, 0.8)";
   let settings = common.sanitizeSettings(common.DEFAULT_SETTINGS);
   let tracking = false;
   let path = [];
@@ -19,10 +24,15 @@
   let suppressNextContextMenu = false;
   let trailCanvas = null;
   let trailCtx = null;
+  let gesturePipeCanvas = null;
+  let gesturePipeCtx = null;
+  let gesturePipeScale = 1;
+  let gesturePipeScaleLocked = false;
+  let gestureFirstSegmentMaxProjection = 0;
+  let gestureStartClientPoint = null;
   let clearTrailTimer = null;
   let trailLastPoint = null;
   let trailPixelRatio = 1;
-  let gestureInvalid = false;
   let blockGestureUntilRelease = false;
   let lastRightStationaryClickAt = 0;
   let suppressPointerAfterRockerUntil = 0;
@@ -31,10 +41,29 @@
   let debugLogBody = null;
   let debugLogLines = [];
   let debugCollapsed = false;
+  /** Unified pipe state: recognition geometry + elimination + progress. */
+  let pipeState = null;
+  let debugCandidatesEl = null;
   let gestureHintEl = null;
+  /** Inner node inside shadow root (text + border); host handles position and zoom scale. */
+  let gestureHintPillEl = null;
   let strokePoints = [];
-  let pathTemplateDeviant = false;
-  let lastTrailInvalidForDraw = false;
+  let overlayViewportListener = null;
+  /** From `tabs.getZoom` (Ctrl+/- page zoom); combined with visual viewport pinch in `getOverlayZoomCompensationFactor`. */
+  let cachedTabZoomFactor = 1;
+
+  function randomNaviGesturesUiSuffix() {
+    try {
+      if (globalThis.crypto && globalThis.crypto.getRandomValues) {
+        const buf = new Uint8Array(8);
+        globalThis.crypto.getRandomValues(buf);
+        return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    return String(Math.random()).slice(2, 18);
+  }
 
   function nowTimeLabel() {
     const d = new Date();
@@ -54,47 +83,101 @@
 
   function createDebugPanel() {
     if (!settings.showDebugLogWindow || debugPanel || !document.documentElement) return;
-    debugPanel = document.createElement("section");
-    debugPanel.setAttribute("aria-label", "NaviGestures debug logs");
-    debugPanel.style.position = "fixed";
-    debugPanel.style.right = "12px";
-    debugPanel.style.bottom = "12px";
-    debugPanel.style.width = "380px";
-    debugPanel.style.maxHeight = "44vh";
-    debugPanel.style.background = "rgba(0,0,0,0.82)";
-    debugPanel.style.border = "1px solid rgba(255,255,255,0.2)";
-    debugPanel.style.borderRadius = "8px";
-    debugPanel.style.color = "#f2f2f2";
-    debugPanel.style.zIndex = "2147483646";
-    debugPanel.style.fontFamily = "ui-monospace, Menlo, Monaco, Consolas, monospace";
-    debugPanel.style.fontSize = "11px";
-    debugPanel.style.lineHeight = "1.35";
-    debugPanel.style.pointerEvents = "auto";
-    debugPanel.style.boxShadow = "0 8px 28px rgba(0,0,0,0.35)";
+    const uid = randomNaviGesturesUiSuffix();
+    const host = document.createElement("div");
+    host.id = `ng-dbg-host-${uid}`;
+    host.setAttribute("data-navigestures-ui", "debug");
+    host.style.cssText =
+      "position:fixed;right:12px;bottom:12px;z-index:2147483646;pointer-events:auto;display:block;";
+    const shadow = host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = `
+      *, *::before, *::after { box-sizing: border-box; }
+      .ng-dbg-shell {
+        width: ${DEBUG_PANEL_WIDTH_PX}px;
+        max-height: ${DEBUG_PANEL_MAX_HEIGHT_PX}px;
+        display: flex;
+        flex-direction: column;
+        background: rgba(8, 10, 16, 0.9);
+        border: 1px solid rgba(180, 220, 255, 0.28);
+        border-radius: 8px;
+        color: #e8f4ff;
+        font: 500 11px/1.35 ui-monospace, Menlo, Monaco, Consolas, monospace;
+        box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55);
+        overflow: hidden;
+      }
+      .ng-dbg-shell.ng-dbg-collapsed { max-height: none; }
+      .ng-dbg-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: 0 0 auto;
+        padding: 8px 8px 6px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      .ng-dbg-title {
+        flex: 1;
+        font-size: 11px;
+        font-weight: 700;
+        color: #f5fbff;
+        letter-spacing: 0.02em;
+      }
+      .ng-dbg-btn {
+        cursor: pointer;
+        font: inherit;
+        font-weight: 600;
+        font-size: 11px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        border: 1px solid rgba(200, 230, 255, 0.35);
+        background: rgba(255, 255, 255, 0.1);
+        color: #f0f8ff;
+      }
+      .ng-dbg-btn:hover { background: rgba(255, 255, 255, 0.16); }
+      .ng-dbg-candidates {
+        flex: 0 0 auto;
+        padding: 6px 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        font-size: 10px;
+        line-height: 1.4;
+        color: #b8d8ff;
+        word-break: break-word;
+        max-height: 72px;
+        overflow-y: auto;
+      }
+      .ng-dbg-body {
+        margin: 0;
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 8px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        user-select: text;
+        color: #dceeff;
+      }
+    `;
+    shadow.appendChild(style);
+
+    const shell = document.createElement("section");
+    shell.className = "ng-dbg-shell";
+    shell.id = `ng-dbg-panel-${uid}`;
+    shell.setAttribute("aria-label", "NaviGestures debug logs");
 
     const header = document.createElement("div");
-    header.style.display = "flex";
-    header.style.alignItems = "center";
-    header.style.gap = "6px";
-    header.style.padding = "8px 8px 6px";
-    header.style.borderBottom = "1px solid rgba(255,255,255,0.12)";
+    header.className = "ng-dbg-header";
+    header.id = `ng-dbg-head-${uid}`;
 
     const title = document.createElement("strong");
+    title.className = "ng-dbg-title";
+    title.id = `ng-dbg-title-${uid}`;
     title.textContent = "NaviGestures debug";
-    title.style.flex = "1";
-    title.style.fontSize = "11px";
-    title.style.fontWeight = "600";
 
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
+    copyBtn.className = "ng-dbg-btn";
+    copyBtn.id = `ng-dbg-copy-${uid}`;
     copyBtn.textContent = "Copy";
-    copyBtn.style.cursor = "pointer";
-    copyBtn.style.fontSize = "11px";
-    copyBtn.style.padding = "2px 6px";
-    copyBtn.style.borderRadius = "4px";
-    copyBtn.style.border = "1px solid rgba(255,255,255,0.3)";
-    copyBtn.style.background = "rgba(255,255,255,0.08)";
-    copyBtn.style.color = "inherit";
     copyBtn.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(debugLogLines.join("\n"));
@@ -106,14 +189,9 @@
 
     const clearBtn = document.createElement("button");
     clearBtn.type = "button";
+    clearBtn.className = "ng-dbg-btn";
+    clearBtn.id = `ng-dbg-clear-${uid}`;
     clearBtn.textContent = "Clear";
-    clearBtn.style.cursor = "pointer";
-    clearBtn.style.fontSize = "11px";
-    clearBtn.style.padding = "2px 6px";
-    clearBtn.style.borderRadius = "4px";
-    clearBtn.style.border = "1px solid rgba(255,255,255,0.3)";
-    clearBtn.style.background = "rgba(255,255,255,0.08)";
-    clearBtn.style.color = "inherit";
     clearBtn.addEventListener("click", () => {
       debugLogLines = [];
       if (debugLogBody) debugLogBody.textContent = "";
@@ -122,38 +200,41 @@
 
     const collapseBtn = document.createElement("button");
     collapseBtn.type = "button";
+    collapseBtn.className = "ng-dbg-btn";
+    collapseBtn.id = `ng-dbg-collapse-${uid}`;
     collapseBtn.textContent = "Hide";
-    collapseBtn.style.cursor = "pointer";
-    collapseBtn.style.fontSize = "11px";
-    collapseBtn.style.padding = "2px 6px";
-    collapseBtn.style.borderRadius = "4px";
-    collapseBtn.style.border = "1px solid rgba(255,255,255,0.3)";
-    collapseBtn.style.background = "rgba(255,255,255,0.08)";
-    collapseBtn.style.color = "inherit";
 
     debugLogBody = document.createElement("pre");
-    debugLogBody.style.margin = "0";
-    debugLogBody.style.padding = "8px";
-    debugLogBody.style.maxHeight = "calc(44vh - 42px)";
-    debugLogBody.style.overflow = "auto";
-    debugLogBody.style.whiteSpace = "pre-wrap";
-    debugLogBody.style.wordBreak = "break-word";
-    debugLogBody.style.userSelect = "text";
+    debugLogBody.className = "ng-dbg-body";
+    debugLogBody.id = `ng-dbg-log-${uid}`;
+
+    debugCandidatesEl = document.createElement("div");
+    debugCandidatesEl.className = "ng-dbg-candidates";
+    debugCandidatesEl.id = `ng-dbg-cand-${uid}`;
+    debugCandidatesEl.setAttribute("aria-live", "polite");
 
     collapseBtn.addEventListener("click", () => {
       debugCollapsed = !debugCollapsed;
-      debugLogBody.style.display = debugCollapsed ? "none" : "block";
-      debugPanel.style.maxHeight = debugCollapsed ? "unset" : "44vh";
+      debugLogBody.style.display = debugCollapsed ? "none" : "";
+      if (debugCandidatesEl) debugCandidatesEl.style.display = debugCollapsed ? "none" : "";
+      shell.classList.toggle("ng-dbg-collapsed", debugCollapsed);
       collapseBtn.textContent = debugCollapsed ? "Show" : "Hide";
+      applyDebugPanelZoomIndependence();
     });
 
     header.appendChild(title);
     header.appendChild(copyBtn);
     header.appendChild(clearBtn);
     header.appendChild(collapseBtn);
-    debugPanel.appendChild(header);
-    debugPanel.appendChild(debugLogBody);
+    shell.appendChild(header);
+    shell.appendChild(debugCandidatesEl);
+    shell.appendChild(debugLogBody);
+    shadow.appendChild(shell);
+
+    debugPanel = host;
     document.documentElement.appendChild(debugPanel);
+    applyDebugPanelZoomIndependence();
+    updateOverlayViewportListeners();
     appendDebugLog("Debug panel ready.");
   }
 
@@ -163,8 +244,10 @@
     }
     debugPanel = null;
     debugLogBody = null;
+    debugCandidatesEl = null;
     debugCollapsed = false;
     debugLogLines = [];
+    updateOverlayViewportListeners();
   }
 
   function syncDebugPanelVisibility() {
@@ -175,64 +258,9 @@
     removeDebugPanel();
   }
 
-  function diffLabel(observed, expected) {
-    const diff = common.angularDifference(
-      common.angleForDirection(observed),
-      common.angleForDirection(expected)
-    );
-    return `${observed} vs ${expected} (${diff.toFixed(1)}°)`;
-  }
-
-  function prefixCompatibilityDetails(observedPath) {
-    const observedLen = observedPath.length;
-    const details = [];
-    const tol = settings.inaccuracyDegrees;
-    for (const action of common.ACTIONS) {
-      const expected = settings.gestures[action] || [];
-      if (expected.length < observedLen) {
-        details.push(`${action}: too short (${expected.length} < ${observedLen})`);
-        continue;
-      }
-      let mismatch = null;
-      for (let i = 0; i < observedLen; i += 1) {
-        if (!common.directionsCompatible(observedPath[i], expected[i], tol)) {
-          mismatch = `${action}: mismatch at ${i + 1} (${diffLabel(observedPath[i], expected[i])}, tol=${tol}°)`;
-          break;
-        }
-      }
-      details.push(mismatch || `${action}: compatible`);
-    }
-    return details;
-  }
-
-  function exactMatchEvaluation(observedPath) {
-    const details = [];
-    const tol = settings.inaccuracyDegrees;
-    for (const action of common.ACTIONS) {
-      const expected = settings.gestures[action] || [];
-      if (expected.length !== observedPath.length) {
-        details.push(`${action}: length ${expected.length} != ${observedPath.length}`);
-        continue;
-      }
-      let allCompatible = true;
-      let score = 0;
-      for (let i = 0; i < observedPath.length; i += 1) {
-        const observed = observedPath[i];
-        const wanted = expected[i];
-        const diff = common.angularDifference(
-          common.angleForDirection(observed),
-          common.angleForDirection(wanted)
-        );
-        if (diff > tol) {
-          details.push(`${action}: reject at ${i + 1} (${diffLabel(observed, wanted)}, tol=${tol}°)`);
-          allCompatible = false;
-          break;
-        }
-        score += diff;
-      }
-      if (allCompatible) details.push(`${action}: candidate score=${score.toFixed(1)}`);
-    }
-    return details;
+  function formatActionList(actions) {
+    if (!Array.isArray(actions) || actions.length === 0) return "(none)";
+    return actions.join(", ");
   }
 
   function getConfiguredMouseButtonCode() {
@@ -323,13 +351,78 @@
     settings = common.sanitizeSettings(data.settings || common.DEFAULT_SETTINGS);
     applyTrailStyle();
     syncDebugPanelVisibility();
+    requestTabZoomFromBackground();
     appendDebugLog(
       `Settings loaded: minSegmentPx=${settings.minSegmentPx}, inaccuracy=${settings.inaccuracyDegrees}°, trigger=${settings.triggerMouseButton}, rockerLeft=${settings.rockerMiddleLeftAction}, rockerRight=${settings.rockerMiddleRightAction}`
     );
   }
 
+  function pipeColorForAction(action, alpha) {
+    let h = 0;
+    for (let i = 0; i < action.length; i += 1) {
+      h = (h * 33 + action.charCodeAt(i)) % 360;
+    }
+    const a = Math.max(0, Math.min(1, alpha != null ? alpha : 1));
+    return `hsla(${h}, 88%, 62%, ${a})`;
+  }
+
+  function clampGesturePipeScale(v) {
+    return Math.min(20, Math.max(1, v));
+  }
+
+  function directionUnitVector(direction) {
+    const deg = common.angleForDirection(direction);
+    const rad = (deg * Math.PI) / 180;
+    return { x: Math.cos(rad), y: Math.sin(rad) };
+  }
+
+  function updateGesturePipeScaleFromStroke() {
+    if (gesturePipeScaleLocked) return false;
+    if (!gestureStartClientPoint || path.length === 0 || strokePoints.length === 0) return false;
+    const firstDir = path[0];
+    const u = directionUnitVector(firstDir);
+    const p = strokePoints[strokePoints.length - 1];
+    const dx = p.x - gestureStartClientPoint.x;
+    const dy = p.y - gestureStartClientPoint.y;
+    const proj = dx * u.x + dy * u.y;
+    if (proj > gestureFirstSegmentMaxProjection) {
+      gestureFirstSegmentMaxProjection = proj;
+    }
+    const base = common.pipeScaleBase(settings);
+    const nextScale = clampGesturePipeScale(gestureFirstSegmentMaxProjection / base);
+    const changed = Math.abs(nextScale - gesturePipeScale) >= 0.05;
+    if (changed) gesturePipeScale = nextScale;
+    if (path.length >= 2) {
+      const firstAngle = common.angleForDirection(path[0]);
+      for (let i = 1; i < path.length; i += 1) {
+        if (common.angularDifference(firstAngle, common.angleForDirection(path[i])) > 90) {
+          gesturePipeScaleLocked = true;
+          break;
+        }
+      }
+    }
+    return changed;
+  }
+
+  function createGesturePipeCanvas() {
+    if (gesturePipeCanvas || !document.documentElement) return;
+    gesturePipeCanvas = document.createElement("canvas");
+    gesturePipeCanvas.setAttribute("aria-hidden", "true");
+    gesturePipeCanvas.style.position = "fixed";
+    gesturePipeCanvas.style.left = "0";
+    gesturePipeCanvas.style.top = "0";
+    gesturePipeCanvas.style.width = "100vw";
+    gesturePipeCanvas.style.height = "100vh";
+    gesturePipeCanvas.style.pointerEvents = "none";
+    // Keep pipe overlay below active stroke / hint layers.
+    gesturePipeCanvas.style.zIndex = "2147483644";
+    gesturePipeCtx = gesturePipeCanvas.getContext("2d");
+    document.documentElement.appendChild(gesturePipeCanvas);
+  }
+
   function createTrailCanvas() {
     if (trailCanvas || !document.documentElement) return;
+    createGesturePipeCanvas();
     trailCanvas = document.createElement("canvas");
     trailCanvas.setAttribute("aria-hidden", "true");
     trailCanvas.style.position = "fixed";
@@ -352,9 +445,14 @@
     const cssWidth = viewport ? viewport.width : window.innerWidth;
     const cssHeight = viewport ? viewport.height : window.innerHeight;
     trailPixelRatio = window.devicePixelRatio || 1;
+    if (gesturePipeCanvas && gesturePipeCtx) {
+      gesturePipeCanvas.width = Math.max(1, Math.floor(cssWidth * trailPixelRatio));
+      gesturePipeCanvas.height = Math.max(1, Math.floor(cssHeight * trailPixelRatio));
+    }
     trailCanvas.width = Math.max(1, Math.floor(cssWidth * trailPixelRatio));
     trailCanvas.height = Math.max(1, Math.floor(cssHeight * trailPixelRatio));
     applyTrailStyle();
+    redrawGesturePipeOverlay();
   }
 
   function toTrailPoint(clientX, clientY) {
@@ -372,8 +470,19 @@
     trailCtx.lineWidth = lineW;
     trailCtx.lineCap = "round";
     trailCtx.lineJoin = "round";
-    const color =
-      gestureInvalid || pathTemplateDeviant ? INVALID_TRAIL_COLOR : settings.trailColor;
+    trailCtx.strokeStyle = settings.trailColor;
+    trailCtx.shadowColor = settings.trailColor;
+    trailCtx.shadowBlur = Math.max(0.5, lineW * 0.55);
+    trailCtx.shadowOffsetX = 0;
+    trailCtx.shadowOffsetY = 0;
+  }
+
+  function trailStrokeStyle(color) {
+    if (!trailCtx) return;
+    const lineW = settings.trailWidth * trailPixelRatio;
+    trailCtx.lineWidth = lineW;
+    trailCtx.lineCap = "round";
+    trailCtx.lineJoin = "round";
     trailCtx.strokeStyle = color;
     trailCtx.shadowColor = color;
     trailCtx.shadowBlur = Math.max(0.5, lineW * 0.55);
@@ -381,10 +490,83 @@
     trailCtx.shadowOffsetY = 0;
   }
 
+  function drawCenterline(points, color, widthPx, maxLen) {
+    if (!points || points.length < 2) return;
+    let remaining = Number.isFinite(maxLen) ? Math.max(0, maxLen) : Number.POSITIVE_INFINITY;
+    gesturePipeCtx.beginPath();
+    gesturePipeCtx.moveTo(points[0].x * trailPixelRatio, points[0].y * trailPixelRatio);
+    for (let i = 1; i < points.length; i += 1) {
+      const a = points[i - 1];
+      const b = points[i];
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+      if (segLen < 1e-6) continue;
+      if (remaining >= segLen) {
+        gesturePipeCtx.lineTo(b.x * trailPixelRatio, b.y * trailPixelRatio);
+        remaining -= segLen;
+        continue;
+      }
+      const t = remaining / segLen;
+      const x = a.x + (b.x - a.x) * t;
+      const y = a.y + (b.y - a.y) * t;
+      gesturePipeCtx.lineTo(x * trailPixelRatio, y * trailPixelRatio);
+      remaining = 0;
+      break;
+    }
+    gesturePipeCtx.lineWidth = widthPx;
+    gesturePipeCtx.lineCap = "round";
+    gesturePipeCtx.lineJoin = "round";
+    gesturePipeCtx.strokeStyle = color;
+    gesturePipeCtx.shadowBlur = 0;
+    gesturePipeCtx.stroke();
+  }
+
+  function drawPipe(pts, action, radiusPx) {
+    if (!pts || pts.length < 2) return;
+    drawCenterline(pts, pipeColorForAction(action, 0.13), radiusPx * 2);
+    drawCenterline(
+      pts,
+      pipeColorForAction(action, 0.8),
+      Math.max(1.2, settings.trailWidth * 0.75) * trailPixelRatio
+    );
+  }
+
+  function redrawGesturePipeOverlay() {
+    if (!gesturePipeCtx || !gesturePipeCanvas) return;
+    gesturePipeCtx.clearRect(0, 0, gesturePipeCanvas.width, gesturePipeCanvas.height);
+    if (!tracking || !pipeState) return;
+    const surviving = pipeState.pipes.filter((p) => !p.eliminated);
+    if (!surviving.length) return;
+    const radiusPx = pipeState.radius * trailPixelRatio;
+    for (const pipe of surviving) {
+      const trailPts = pipe.centerline.map((p) => toTrailPoint(p.x, p.y));
+      drawPipe(trailPts, pipe.action, radiusPx);
+    }
+  }
+
+  function redrawTrailSegmented() {
+    if (!trailCtx || strokePoints.length < 2) return;
+    trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
+    trailStrokeStyle(settings.trailColor);
+    trailCtx.beginPath();
+    const pts = strokePoints.map((p) => toTrailPoint(p.x, p.y));
+    trailCtx.moveTo(pts[0].x * trailPixelRatio, pts[0].y * trailPixelRatio);
+    for (let i = 1; i < pts.length; i += 1) {
+      trailCtx.lineTo(pts[i].x * trailPixelRatio, pts[i].y * trailPixelRatio);
+    }
+    trailCtx.stroke();
+    trailLastPoint = pts[pts.length - 1];
+  }
+
   function clearTrail() {
     if (!trailCtx || !trailCanvas) return;
     trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
     trailLastPoint = null;
+  }
+
+  function clearGesturePipeOverlay() {
+    if (gesturePipeCtx && gesturePipeCanvas) {
+      gesturePipeCtx.clearRect(0, 0, gesturePipeCanvas.width, gesturePipeCanvas.height);
+    }
   }
 
   function startTrail(x, y) {
@@ -409,22 +591,16 @@
     trailLastPoint = { x, y };
   }
 
-  function redrawTrailFromStrokePoints() {
-    if (!trailCtx || strokePoints.length < 1) return;
-    trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
-    applyTrailStyle();
-    const pts = strokePoints.map((p) => toTrailPoint(p.x, p.y));
-    trailCtx.beginPath();
-    trailCtx.moveTo(pts[0].x * trailPixelRatio, pts[0].y * trailPixelRatio);
-    for (let i = 1; i < pts.length; i += 1) {
-      trailCtx.lineTo(pts[i].x * trailPixelRatio, pts[i].y * trailPixelRatio);
+  function updateDebugCandidatesBar() {
+    if (!debugCandidatesEl) return;
+    if (!tracking || !pipeState) {
+      debugCandidatesEl.textContent = "";
+      return;
     }
-    trailCtx.stroke();
-    trailLastPoint = pts[pts.length - 1];
-  }
-
-  function updatePathTemplateDeviantFlag() {
-    pathTemplateDeviant = !common.anyConfiguredGestureStillPossible(path, settings, strokePoints);
+    const surviving = common.survivingPipeActions(pipeState);
+    const labels = surviving.map((a) => common.ACTION_LABELS[a] || a);
+    debugCandidatesEl.textContent =
+      labels.length === 0 ? "Pipes: (none)" : `Pipes: ${labels.join(", ")}`;
   }
 
   function finishTrail() {
@@ -435,29 +611,158 @@
     }, 160);
   }
 
+  function refreshOverlaysForZoom() {
+    applyGestureHintZoomIndependence();
+    applyDebugPanelZoomIndependence();
+  }
+
+  function requestTabZoomFromBackground() {
+    try {
+      if (isBrowserApi) {
+        api.runtime
+          .sendMessage({ type: "navigestures-get-tab-zoom" })
+          .then((response) => {
+            if (response && typeof response.zoom === "number" && response.zoom > 0) {
+              cachedTabZoomFactor = response.zoom;
+            }
+            refreshOverlaysForZoom();
+          })
+          .catch(() => refreshOverlaysForZoom());
+      } else {
+        api.runtime.sendMessage({ type: "navigestures-get-tab-zoom" }, (response) => {
+          const err = api.runtime && api.runtime.lastError;
+          if (!err && response && typeof response.zoom === "number" && response.zoom > 0) {
+            cachedTabZoomFactor = response.zoom;
+          }
+          refreshOverlaysForZoom();
+        });
+      }
+    } catch (_) {
+      refreshOverlaysForZoom();
+    }
+  }
+
+  function getVisualViewportPinchScale() {
+    const vv = window.visualViewport;
+    if (!vv || typeof vv.scale !== "number" || !(vv.scale > 0)) return 1;
+    return vv.scale;
+  }
+
+  function getLayoutViewportZoomHint() {
+    const vv = window.visualViewport;
+    if (!vv || vv.width <= 0) return 1;
+    const layoutW = document.documentElement.clientWidth;
+    if (layoutW <= 0) return 1;
+    const r = layoutW / vv.width;
+    if (r >= 0.65 && r <= 2.5) return r;
+    return 1;
+  }
+
+  /**
+   * Effective zoom for counter-scaling fixed UI. Desktop Ctrl+/- is exposed as `tabs.getZoom`;
+   * `visualViewport.scale` covers pinch; layout ratio is a fallback when the others sit at 1.
+   */
+  function getOverlayZoomCompensationFactor() {
+    const zTab = typeof cachedTabZoomFactor === "number" && cachedTabZoomFactor > 0 ? cachedTabZoomFactor : 1;
+    const zPinch = getVisualViewportPinchScale();
+    const zLayout = getLayoutViewportZoomHint();
+
+    if (Math.abs(zTab - 1) >= 0.02) {
+      return zTab * (Math.abs(zPinch - 1) >= 0.02 ? zPinch : 1);
+    }
+    if (Math.abs(zPinch - 1) >= 0.02) {
+      return zPinch;
+    }
+    if (Math.abs(zLayout - 1) >= 0.02) {
+      return zLayout;
+    }
+    return 1;
+  }
+
+  function applyGestureHintZoomIndependence() {
+    if (!gestureHintEl) return;
+    const z = getOverlayZoomCompensationFactor();
+    if (Math.abs(z - 1) < 0.02) {
+      gestureHintEl.style.removeProperty("transform");
+      gestureHintEl.style.removeProperty("transform-origin");
+      return;
+    }
+    const inv = 1 / z;
+    gestureHintEl.style.transformOrigin = "top left";
+    gestureHintEl.style.transform = `scale(${inv})`;
+  }
+
+  function applyDebugPanelZoomIndependence() {
+    if (!debugPanel) return;
+    const z = getOverlayZoomCompensationFactor();
+    if (Math.abs(z - 1) < 0.02) {
+      debugPanel.style.removeProperty("transform");
+      debugPanel.style.removeProperty("transform-origin");
+      return;
+    }
+    debugPanel.style.transformOrigin = "bottom right";
+    debugPanel.style.transform = `scale(${1 / z})`;
+  }
+
+  function updateOverlayViewportListeners() {
+    const vv = window.visualViewport;
+    const needListener = !!(debugPanel || tracking);
+    if (!vv) return;
+    if (!needListener) {
+      if (overlayViewportListener) {
+        vv.removeEventListener("resize", overlayViewportListener);
+        vv.removeEventListener("scroll", overlayViewportListener);
+        overlayViewportListener = null;
+      }
+      return;
+    }
+    if (overlayViewportListener) return;
+    overlayViewportListener = () => {
+      if (gestureHintEl) applyGestureHintZoomIndependence();
+      if (debugPanel) applyDebugPanelZoomIndependence();
+    };
+    vv.addEventListener("resize", overlayViewportListener);
+    vv.addEventListener("scroll", overlayViewportListener);
+  }
+
   function ensureGestureHint() {
     if (gestureHintEl || !document.documentElement) return;
-    gestureHintEl = document.createElement("div");
-    gestureHintEl.setAttribute("aria-live", "polite");
-    gestureHintEl.style.position = "fixed";
-    gestureHintEl.style.zIndex = "2147483646";
-    gestureHintEl.style.pointerEvents = "none";
-    gestureHintEl.style.maxWidth = "min(280px, 92vw)";
-    gestureHintEl.style.padding = "6px 12px";
-    gestureHintEl.style.borderRadius = "999px";
-    gestureHintEl.style.fontFamily =
-      'system-ui, -apple-system, "Segoe UI", "Roboto", "Helvetica Neue", sans-serif';
-    gestureHintEl.style.fontSize = "13px";
-    gestureHintEl.style.fontWeight = "600";
-    gestureHintEl.style.letterSpacing = "0.06em";
-    gestureHintEl.style.textTransform = "uppercase";
-    gestureHintEl.style.color = "#e8f4ff";
-    gestureHintEl.style.background = "rgba(6, 10, 22, 0.62)";
-    gestureHintEl.style.border = "1px solid rgba(200, 220, 255, 0.35)";
-    gestureHintEl.style.boxShadow = "0 2px 16px rgba(0,0,0,0.45)";
-    gestureHintEl.style.textShadow =
-      "0 0 8px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.95), 1px 0 2px rgba(0,0,0,0.85), -1px 0 2px rgba(0,0,0,0.85)";
-    gestureHintEl.style.visibility = "hidden";
+    const uid = randomNaviGesturesUiSuffix();
+    const host = document.createElement("div");
+    host.id = `ng-hint-host-${uid}`;
+    host.setAttribute("data-navigestures-ui", "gesture-hint");
+    host.setAttribute("aria-live", "polite");
+    host.style.cssText =
+      "position:fixed;z-index:2147483646;pointer-events:none;visibility:hidden;display:block;";
+    const shadow = host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = `
+      *, *::before, *::after { box-sizing: border-box; }
+      .ng-gesture-hint-pill {
+        max-width: ${GESTURE_HINT_MAX_WIDTH_PX}px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        font: 600 13px/1.25 system-ui, -apple-system, "Segoe UI", "Roboto", "Helvetica Neue", sans-serif;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #f0f8ff;
+        background: rgba(8, 10, 18, 0.9);
+        border: 1px solid rgba(200, 230, 255, 0.38);
+        box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
+        text-shadow:
+          0 0 8px rgba(0, 0, 0, 0.9),
+          0 1px 2px rgba(0, 0, 0, 0.95),
+          1px 0 2px rgba(0, 0, 0, 0.85),
+          -1px 0 2px rgba(0, 0, 0, 0.85);
+      }
+    `;
+    shadow.appendChild(style);
+    const pill = document.createElement("div");
+    pill.className = "ng-gesture-hint-pill";
+    pill.id = `ng-hint-pill-${uid}`;
+    shadow.appendChild(pill);
+    gestureHintEl = host;
+    gestureHintPillEl = pill;
     document.documentElement.appendChild(gestureHintEl);
   }
 
@@ -466,37 +771,36 @@
       gestureHintEl.parentNode.removeChild(gestureHintEl);
     }
     gestureHintEl = null;
+    gestureHintPillEl = null;
   }
 
   function syncGestureHint(clientX, clientY) {
-    if (!gestureHintEl) return;
+    if (!gestureHintEl || !gestureHintPillEl) return;
+    applyGestureHintZoomIndependence();
     const offsetX = 14;
     const offsetY = 28;
     gestureHintEl.style.left = `${clientX + offsetX}px`;
     gestureHintEl.style.top = `${clientY + offsetY}px`;
 
-    const pathHint =
-      common.hasAnyPathTemplate(settings) && strokePoints.length >= 2
-        ? common.livePathTemplateHintDisplay(path, strokePoints, settings)
-        : "";
-    const tokenHintRaw = path.length ? common.liveGestureLabel(path, settings) : "";
-    const tokenHint =
-      common.hasAnyPathTemplate(settings) && tokenHintRaw === "\u2014" ? "" : tokenHintRaw;
-    const hintText = pathHint || tokenHint;
+    const surviving = common.survivingPipeActions(pipeState);
+    let hintText = "";
+    let borderColor = HINT_BORDER_DEFAULT;
 
-    if (!hintText && !gestureInvalid && !pathTemplateDeviant) {
-      gestureHintEl.textContent = "";
+    if (surviving.length === 0) {
+      gestureHintPillEl.textContent = "";
       gestureHintEl.style.visibility = "hidden";
       return;
-    }
-    gestureHintEl.style.visibility = "visible";
-    if (gestureInvalid || pathTemplateDeviant) {
-      gestureHintEl.style.borderColor = "rgba(255, 120, 120, 0.5)";
-      gestureHintEl.textContent = hintText || "\u2014";
+    } else if (surviving.length === 1) {
+      hintText = common.ACTION_LABELS[surviving[0]] || surviving[0];
+      borderColor = HINT_BORDER_MATCHED;
     } else {
-      gestureHintEl.style.borderColor = "rgba(200, 220, 255, 0.35)";
-      gestureHintEl.textContent = hintText;
+      hintText = "Multiple Matches";
     }
+
+    gestureHintPillEl.style.borderColor = borderColor;
+    gestureHintPillEl.textContent = hintText;
+    gestureHintEl.style.visibility = "visible";
+
     const rect = gestureHintEl.getBoundingClientRect();
     let left = clientX + offsetX;
     let top = clientY + offsetY;
@@ -512,17 +816,22 @@
 
   function beginGestureTracking(startX, startY) {
     tracking = true;
-    gestureInvalid = false;
-    pathTemplateDeviant = false;
-    lastTrailInvalidForDraw = false;
     path = [];
     strokePoints = [{ x: startX, y: startY }];
     totalDistance = 0;
     anchorPoint = { x: startX, y: startY };
+    gestureStartClientPoint = { x: startX, y: startY };
+    gesturePipeScale = 1;
+    gesturePipeScaleLocked = false;
+    gestureFirstSegmentMaxProjection = 0;
+    pipeState = common.createPipeMatchState(settings, { x: startX, y: startY }, gesturePipeScale);
+    redrawGesturePipeOverlay();
     ensureGestureHint();
+    updateOverlayViewportListeners();
     const startPoint = toTrailPoint(startX, startY);
     startTrail(startPoint.x, startPoint.y);
     applyTrailStyle();
+    updateDebugCandidatesBar();
     appendDebugLog(`Gesture start at (${Math.round(startX)}, ${Math.round(startY)})`);
   }
 
@@ -532,77 +841,49 @@
     strokePoints = [];
     anchorPoint = null;
     totalDistance = 0;
-    gestureInvalid = false;
-    pathTemplateDeviant = false;
-    lastTrailInvalidForDraw = false;
+    pipeState = null;
+    gesturePipeScale = 1;
+    gesturePipeScaleLocked = false;
+    gestureFirstSegmentMaxProjection = 0;
+    gestureStartClientPoint = null;
+    clearGesturePipeOverlay();
     removeGestureHint();
+    updateDebugCandidatesBar();
+    updateOverlayViewportListeners();
   }
 
   function completeGesture(allowAction) {
     if (!tracking) return;
     const observedPath = [...path];
     const observedDistance = totalDistance;
-    const wasInvalid = gestureInvalid;
-    const pointsSnap = strokePoints.map((p) => ({ x: p.x, y: p.y }));
+    const surviving = common.survivingPipeActions(pipeState);
+    const action = common.resolvePipeAction(pipeState);
+
     resetGestureState();
     finishTrail();
 
     appendDebugLog(
-      `Gesture end: allowAction=${allowAction}, path=${observedPath.join(" -> ") || "(none)"}, distance=${observedDistance.toFixed(1)}, invalid=${wasInvalid}, strokePts=${pointsSnap.length}`
+      `Gesture end: allowAction=${allowAction}, path=${observedPath.join(" -> ") || "(none)"}, distance=${observedDistance.toFixed(1)}, surviving=${formatActionList(surviving)}, resolved=${action || "none"}`
     );
     if (!allowAction) {
       appendDebugLog("Gesture ignored: release button does not match trigger.");
       return;
     }
 
-    const pathMatch = common.matchBestPathTemplate(pointsSnap, settings);
-    const tokenAction = common.detectExactAction(observedPath, settings);
-
-    if (wasInvalid && !pathMatch) {
-      appendDebugLog("Gesture rejected: path was previously marked invalid.");
+    if (surviving.length === 0) {
+      appendDebugLog("Gesture rejected: all pipes eliminated during draw.");
       return;
     }
 
-    if (!pathMatch) {
-      const strokeLen = common.polylineLength(pointsSnap);
-      if (!observedPath.length) {
-        if (strokeLen < common.PATH_MATCH_MIN_STROKE_PX) {
-          appendDebugLog("Gesture ignored: stroke too short.");
-          return;
-        }
-        appendDebugLog(
-          "Gesture ignored: no direction steps and no shape match (smooth curves need a taught template + Save in settings)."
-        );
-        return;
-      }
-      if (observedDistance < settings.minSegmentPx) {
-        appendDebugLog(
-          `Gesture ignored: distance ${observedDistance.toFixed(1)} < minSegmentPx ${settings.minSegmentPx}.`
-        );
-        return;
-      }
-    }
-
-    let action = null;
-    if (pathMatch) {
-      action = pathMatch.action;
-      appendDebugLog(`Path template match: ${action} (score=${pathMatch.score.toFixed(3)})`);
-    } else {
-      appendDebugLog(`Exact matching checks: ${exactMatchEvaluation(observedPath).join(" | ")}`);
-      if (tokenAction) {
-        action = tokenAction;
-        appendDebugLog(`Token gesture match: ${action}`);
-      }
-    }
-
     if (action) {
+      appendDebugLog(`Pipe match: ${action}`);
       sendGestureAction(action);
       if (settings.triggerMouseButton === "right") suppressNextContextMenu = true;
-    } else if (pathMatch === null && observedDistance >= settings.minSegmentPx * 1.5) {
-      appendDebugLog("No exact action match, suppressing context menu due to substantial movement.");
+    } else if (observedDistance >= settings.minSegmentPx * 1.5) {
+      appendDebugLog("No pipe completed (insufficient progress), suppressing context menu due to substantial movement.");
       if (settings.triggerMouseButton === "right") suppressNextContextMenu = true;
     } else {
-      appendDebugLog("No exact action match and movement too small to suppress context menu.");
+      appendDebugLog("No pipe completed and movement too small to suppress context menu.");
     }
   }
 
@@ -708,31 +989,31 @@
       appendDebugLog(
         `Direction added: path=${path.join(" -> ")}, step=${stepDist.toFixed(1)}`
       );
-      if (!common.hasAnyPathTemplate(settings)) {
-        const stillStrict = common.pathCanStillMatchAnyAction(path, settings);
-        const stillLoose = common.pathCanStillMatchAnyAction(
-          path,
-          settings,
-          common.PREFIX_LOOSE_TOLERANCE_DEG
-        );
-        if (!gestureInvalid && !stillStrict && !stillLoose) {
-          gestureInvalid = true;
-          appendDebugLog(`Path invalidated: ${prefixCompatibilityDetails(path).join(" | ")}`);
-        }
-      }
+    }
+    const scaleChanged = updateGesturePipeScaleFromStroke();
+    if (scaleChanged) {
+      appendDebugLog(`Pipe scale updated: x${gesturePipeScale.toFixed(2)}`);
     }
 
-    const trailPoint = toTrailPoint(event.clientX, event.clientY);
-    updatePathTemplateDeviantFlag();
-    const invCombined = gestureInvalid || pathTemplateDeviant;
-    applyTrailStyle();
-    if (invCombined !== lastTrailInvalidForDraw && strokePoints.length >= 2) {
-      lastTrailInvalidForDraw = invCombined;
-      redrawTrailFromStrokePoints();
-    } else {
-      extendTrail(trailPoint.x, trailPoint.y);
+    pipeState = common.advancePipeMatchState(
+      pipeState,
+      { x: event.clientX, y: event.clientY },
+      gesturePipeScale,
+      settings
+    );
+
+    if (pipeState && pipeState.allEliminated && path.length > 0) {
+      appendDebugLog("All pipes eliminated — aborting gesture.");
+      resetGestureState();
+      clearTrail();
+      finishTrail();
+      return;
     }
+
+    redrawGesturePipeOverlay();
+    redrawTrailSegmented();
     syncGestureHint(event.clientX, event.clientY);
+    updateDebugCandidatesBar();
   }
 
   function onMouseUp(event) {
@@ -814,7 +1095,16 @@
     settings = common.sanitizeSettings(changes.settings.newValue || common.DEFAULT_SETTINGS);
     applyTrailStyle();
     syncDebugPanelVisibility();
+    requestTabZoomFromBackground();
     appendDebugLog("Settings updated from storage change.");
+  });
+
+  api.runtime.onMessage.addListener((message) => {
+    if (!message || message.type !== "navigestures-tab-zoom-changed") return;
+    if (typeof message.zoom === "number" && message.zoom > 0) {
+      cachedTabZoomFactor = message.zoom;
+      refreshOverlaysForZoom();
+    }
   });
 
   window.addEventListener("DOMContentLoaded", syncDebugPanelVisibility, { once: true });

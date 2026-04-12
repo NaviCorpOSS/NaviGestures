@@ -200,10 +200,32 @@
     }
   }
 
-  api.runtime.onMessage.addListener((message, sender) => {
-    if (!message || message.type !== "navigestures-perform-action") return;
-    performAction(message.action, sender && sender.tab ? sender.tab : null);
+  api.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (!message) return;
+    if (message.type === "navigestures-get-tab-zoom") {
+      const tabId = sender && sender.tab && sender.tab.id;
+      if (tabId == null) {
+        sendResponse({ zoom: 1 });
+        return false;
+      }
+      getTabZoom(tabId)
+        .then((z) => sendResponse({ zoom: typeof z === "number" && z > 0 ? z : 1 }))
+        .catch(() => sendResponse({ zoom: 1 }));
+      return true;
+    }
+    if (message.type === "navigestures-perform-action") {
+      performAction(message.action, sender && sender.tab ? sender.tab : null);
+    }
   });
+
+  if (api.tabs && api.tabs.onZoomChange) {
+    api.tabs.onZoomChange.addListener((info) => {
+      if (!info || info.tabId == null) return;
+      const msg = { type: "navigestures-tab-zoom-changed", zoom: info.newZoomFactor };
+      const p = api.tabs.sendMessage(info.tabId, msg);
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    });
+  }
 
   const actionApi = api.action || api.browserAction;
   if (!actionApi || !actionApi.onClicked) return;

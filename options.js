@@ -6,6 +6,7 @@
   const form = document.getElementById("settingsForm");
   const gestureRows = document.getElementById("gestureRows");
   const minSegmentPxInput = document.getElementById("minSegmentPx");
+  const pipeWidthInput = document.getElementById("pipeWidth");
   const inaccuracyDegreesInput = document.getElementById("inaccuracyDegrees");
   const trailColorPickerInput = document.getElementById("trailColorPicker");
   const trailColorHexInput = document.getElementById("trailColorHex");
@@ -311,6 +312,7 @@
       updateGestureRowPreview(action);
     }
     minSegmentPxInput.value = String(settings.minSegmentPx);
+    pipeWidthInput.value = String(settings.pipeWidth);
     inaccuracyDegreesInput.value = String(settings.inaccuracyDegrees);
     syncColorInputs(settings.trailColor);
     trailWidthInput.value = String(settings.trailWidth);
@@ -338,6 +340,7 @@
       gestures,
       gesturePathTemplates: gesturePathTemplatesState,
       minSegmentPx: minSegmentPxInput.value,
+      pipeWidth: pipeWidthInput.value,
       inaccuracyDegrees: inaccuracyDegreesInput.value,
       trailColor: trailColorHexInput.value,
       trailWidth: trailWidthInput.value,

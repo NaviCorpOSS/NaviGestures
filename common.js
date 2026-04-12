@@ -52,6 +52,7 @@
       toggleFullscreen: []
     },
     minSegmentPx: 18,
+    pipeWidth: 100,
     inaccuracyDegrees: 50,
     trailColor: "#24a1ff",
     trailWidth: 3,
@@ -63,8 +64,6 @@
   };
 
   const PATH_TEMPLATE_SAMPLES = 36;
-  const PATH_MATCH_MAX_AVG_DIST = 0.33;
-  const PATH_MATCH_MAX_AVG_DIST_HINT = 0.42;
   const PATH_MATCH_MIN_STROKE_PX = 22;
 
   function defaultGesturePathTemplates() {
@@ -147,105 +146,6 @@
       out.push([sampled[i].x * inv, sampled[i].y * inv]);
     }
     return out;
-  }
-
-  function pathTemplateAvgDistance(a, b) {
-    let sum = 0;
-    const n = Math.min(a.length, b.length);
-    if (!n) return Number.POSITIVE_INFINITY;
-    for (let i = 0; i < n; i += 1) {
-      const dx = a[i][0] - b[i][0];
-      const dy = a[i][1] - b[i][1];
-      sum += dx * dx + dy * dy;
-    }
-    return Math.sqrt(sum / n);
-  }
-
-  /** Point-wise distance in normalized template space (no rotation): matches taught start and orientation. */
-  function pathTemplateDistanceAligned(cand, tmpl) {
-    if (!cand.length || !tmpl.length) return Number.POSITIVE_INFINITY;
-    return pathTemplateAvgDistance(cand, tmpl);
-  }
-
-  function hasAnyPathTemplate(settings) {
-    const t = settings.gesturePathTemplates;
-    if (!t || typeof t !== "object") return false;
-    return ACTIONS.some((a) => t[a] && Array.isArray(t[a]) && t[a].length === PATH_TEMPLATE_SAMPLES);
-  }
-
-  function pathTemplateBestMatch(strokePoints, settings, minPolylineLenPx) {
-    const minLen =
-      minPolylineLenPx != null ? minPolylineLenPx : PATH_MATCH_MIN_STROKE_PX * 0.45;
-    if (!hasAnyPathTemplate(settings) || !strokePoints || strokePoints.length < 6) return null;
-    if (polylineLength(strokePoints) < minLen) return null;
-    const templates = settings.gesturePathTemplates;
-    const cand = normalizeStrokeToTemplate(strokePoints);
-    let bestAction = null;
-    let bestD = Number.POSITIVE_INFINITY;
-    for (const action of ACTIONS) {
-      const tmpl = templates[action];
-      if (!tmpl || tmpl.length !== PATH_TEMPLATE_SAMPLES) continue;
-      const d = pathTemplateDistanceAligned(cand, tmpl);
-      if (d < bestD) {
-        bestD = d;
-        bestAction = action;
-      }
-    }
-    if (bestAction == null || !Number.isFinite(bestD)) return null;
-    return { bestD, bestAction };
-  }
-
-  function matchBestPathTemplate(rawPoints, settings) {
-    const templates = settings.gesturePathTemplates;
-    if (!templates || !rawPoints || rawPoints.length < 2) return null;
-    if (polylineLength(rawPoints) < PATH_MATCH_MIN_STROKE_PX) return null;
-    const cand = normalizeStrokeToTemplate(rawPoints);
-    let bestAction = null;
-    let bestD = Number.POSITIVE_INFINITY;
-    for (const action of ACTIONS) {
-      const tmpl = templates[action];
-      if (!tmpl || tmpl.length !== PATH_TEMPLATE_SAMPLES) continue;
-      const d = pathTemplateDistanceAligned(cand, tmpl);
-      if (d < bestD) {
-        bestD = d;
-        bestAction = action;
-      }
-    }
-    if (bestAction != null && bestD <= PATH_MATCH_MAX_AVG_DIST) {
-      return { action: bestAction, score: bestD };
-    }
-    return null;
-  }
-
-  function pathTemplateAllWithinHint(strokePoints, settings) {
-    const minLen = PATH_MATCH_MIN_STROKE_PX * 0.45;
-    if (!hasAnyPathTemplate(settings) || !strokePoints || strokePoints.length < 6) return [];
-    if (polylineLength(strokePoints) < minLen) return [];
-    const cand = normalizeStrokeToTemplate(strokePoints);
-    const templates = settings.gesturePathTemplates;
-    const out = [];
-    for (const action of ACTIONS) {
-      const tmpl = templates[action];
-      if (!tmpl || tmpl.length !== PATH_TEMPLATE_SAMPLES) continue;
-      const d = pathTemplateDistanceAligned(cand, tmpl);
-      if (d <= PATH_MATCH_MAX_AVG_DIST_HINT) out.push({ action, d });
-    }
-    out.sort((a, b) => {
-      if (a.d !== b.d) return a.d - b.d;
-      return ACTIONS.indexOf(a.action) - ACTIONS.indexOf(b.action);
-    });
-    return out;
-  }
-
-  function anyPathTemplateWithinHintDistance(strokePoints, settings) {
-    return pathTemplateAllWithinHint(strokePoints, settings).length > 0;
-  }
-
-  function livePathTemplateLabel(strokePoints, settings) {
-    const withinHint = pathTemplateAllWithinHint(strokePoints, settings);
-    if (!withinHint.length) return "";
-    if (withinHint.length === 1) return ACTION_LABELS[withinHint[0].action];
-    return "Multiple matches";
   }
 
   function gesturePathTemplateToSvgViewSpec(template) {
@@ -604,12 +504,6 @@
     return true;
   }
 
-  function directionsCompatible(observed, expected, inaccuracyDegrees) {
-    if (observed === expected) return true;
-    const diff = angularDifference(angleForDirection(observed), angleForDirection(expected));
-    return diff <= inaccuracyDegrees;
-  }
-
   function createGestureAnchorState(startX, startY) {
     return { anchorX: startX, anchorY: startY };
   }
@@ -633,242 +527,19 @@
     return { stepDist: dist, pushed };
   }
 
-  function strokeToGesturePath(points, minSegmentPx) {
-    if (!points.length) return { path: [], totalDistance: 0 };
-    const path = [];
-    const state = createGestureAnchorState(points[0].x, points[0].y);
-    let totalDistance = 0;
-    for (let i = 1; i < points.length; i += 1) {
-      const { stepDist } = processGestureMove(state, points[i].x, points[i].y, minSegmentPx, path);
-      totalDistance += stepDist;
-    }
-    return { path, totalDistance };
+  function actionHasValidTemplate(action, settings) {
+    const t = settings.gesturePathTemplates && settings.gesturePathTemplates[action];
+    return !!(t && Array.isArray(t) && t.length === PATH_TEMPLATE_SAMPLES);
   }
 
-  const PREFIX_LOOSE_TOLERANCE_DEG = 85;
-
-  function pathCanStillMatchAnyAction(observedPath, settings, toleranceOverride) {
-    const tol =
-      toleranceOverride !== undefined ? toleranceOverride : settings.inaccuracyDegrees;
-    for (const action of ACTIONS) {
-      const expected = settings.gestures[action] || [];
-      if (expected.length < observedPath.length) continue;
-      let allCompatible = true;
-      for (let i = 0; i < observedPath.length; i += 1) {
-        if (!directionsCompatible(observedPath[i], expected[i], tol)) {
-          allCompatible = false;
-          break;
-        }
-      }
-      if (allCompatible) return true;
-    }
-    return false;
+  function actionHasTokens(action, settings) {
+    const g = settings.gestures[action];
+    return Array.isArray(g) && g.length > 0;
   }
 
-  function directionSequenceFromTemplate(tmpl) {
-    if (!tmpl || tmpl.length < 2) return [];
-    const seq = [];
-    for (let i = 0; i < tmpl.length - 1; i += 1) {
-      const dx = tmpl[i + 1][0] - tmpl[i][0];
-      const dy = tmpl[i + 1][1] - tmpl[i][1];
-      if (dx * dx + dy * dy < 1e-10) continue;
-      const d = vectorToDirection(dx, dy);
-      if (!seq.length || seq[seq.length - 1] !== d) seq.push(d);
-    }
-    return seq;
-  }
-
-  /** True if taught polyline is closed in normalized space (circle / loop). */
-  function isTemplateClosedLoop(tmpl) {
-    if (!tmpl || tmpl.length < 3) return false;
-    const a = tmpl[0];
-    const b = tmpl[tmpl.length - 1];
-    return Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.14;
-  }
-
-  /** Chord directions around the full loop, including edge last→first (needed for phase-agnostic prefix checks). */
-  function directionSequenceFromTemplateClosedLoop(tmpl) {
-    const n = tmpl.length;
-    if (n < 2) return [];
-    const seq = [];
-    for (let i = 0; i < n; i += 1) {
-      const j = (i + 1) % n;
-      const dx = tmpl[j][0] - tmpl[i][0];
-      const dy = tmpl[j][1] - tmpl[i][1];
-      if (dx * dx + dy * dy < 1e-12) continue;
-      const d = vectorToDirection(dx, dy);
-      if (!seq.length || seq[seq.length - 1] !== d) seq.push(d);
-    }
-    return seq;
-  }
-
-  function templateDirectionSequenceForPrefixMatch(tmpl) {
-    if (!tmpl || tmpl.length < 2) return [];
-    return isTemplateClosedLoop(tmpl)
-      ? directionSequenceFromTemplateClosedLoop(tmpl)
-      : directionSequenceFromTemplate(tmpl);
-  }
-
-  /** Prefix must match template from index 0 (open strokes / same start phase as taught). */
-  function pathPrefixMatchesTemplateDirs(observedDirs, templateDirs, tol) {
-    if (!observedDirs.length) return true;
-    if (!templateDirs.length) return false;
-    const lim = Math.min(observedDirs.length, templateDirs.length);
-    for (let i = 0; i < lim; i += 1) {
-      if (!directionsCompatible(observedDirs[i], templateDirs[i], tol)) return false;
-    }
-    return true;
-  }
-
-  /** Closed templates: observed prefix may start at any phase on the loop. */
-  function pathPrefixMatchesTemplateDirsCyclic(observedDirs, templateDirs, tol) {
-    if (!observedDirs.length) return true;
-    if (!templateDirs.length) return false;
-    const m = templateDirs.length;
-    for (let o = 0; o < m; o += 1) {
-      let ok = true;
-      for (let i = 0; i < observedDirs.length; i += 1) {
-        if (!directionsCompatible(observedDirs[i], templateDirs[(o + i) % m], tol)) {
-          ok = false;
-          break;
-        }
-      }
-      if (ok) return true;
-    }
-    return false;
-  }
-
-  /**
-   * Live stroke directions include extra diagonals between template chords (L→DL→D vs template L→D).
-   * Walk the template in order (periodic if closed): each step either matches the current observed
-   * segment (advance both) or skips a template chord (advance template only). If all observed
-   * segments are consumed, the stroke is still consistent with that template.
-   */
-  function greedyTemplateWalkMatchesObserved(observedDirs, templateDirs, tol, closedLoop) {
-    if (!observedDirs.length) return true;
-    if (!templateDirs.length) return false;
-    const m = templateDirs.length;
-    const maxT = closedLoop ? m * (observedDirs.length + 8) : m + m * observedDirs.length;
-    if (closedLoop) {
-      for (let o = 0; o < m; o += 1) {
-        let t = 0;
-        let j = 0;
-        while (j < observedDirs.length && t < maxT) {
-          const td = templateDirs[(o + t) % m];
-          if (directionsCompatible(observedDirs[j], td, tol)) j += 1;
-          t += 1;
-        }
-        if (j === observedDirs.length) return true;
-      }
-      return false;
-    }
-    let t = 0;
-    let j = 0;
-    while (j < observedDirs.length && t < maxT) {
-      if (t >= m) return false;
-      const td = templateDirs[t];
-      if (directionsCompatible(observedDirs[j], td, tol)) j += 1;
-      t += 1;
-    }
-    return j === observedDirs.length;
-  }
-
-  function pathPrefixMatchesTemplateForTmpl(observedDirs, tmpl, tol) {
-    const dirs = templateDirectionSequenceForPrefixMatch(tmpl);
-    if (!dirs.length) return false;
-    const closed = isTemplateClosedLoop(tmpl);
-    if (closed) {
-      if (pathPrefixMatchesTemplateDirsCyclic(observedDirs, dirs, tol)) return true;
-    } else if (pathPrefixMatchesTemplateDirs(observedDirs, dirs, tol)) {
-      return true;
-    }
-    return greedyTemplateWalkMatchesObserved(observedDirs, dirs, tol, closed);
-  }
-
-  function anyPathTemplatePrefixStillMatches(observedDirs, settings, tol) {
-    const templates = settings.gesturePathTemplates;
-    if (!templates) return false;
-    for (const action of ACTIONS) {
-      const tmpl = templates[action];
-      if (!tmpl || tmpl.length !== PATH_TEMPLATE_SAMPLES) continue;
-      if (pathPrefixMatchesTemplateForTmpl(observedDirs, tmpl, tol)) return true;
-    }
-    return false;
-  }
-
-  function anyConfiguredGestureStillPossible(observedPath, settings, strokePoints) {
-    if (pathCanStillMatchAnyAction(observedPath, settings, settings.inaccuracyDegrees)) {
-      return true;
-    }
-    if (pathCanStillMatchAnyAction(observedPath, settings, PREFIX_LOOSE_TOLERANCE_DEG)) {
-      return true;
-    }
-    if (!hasAnyPathTemplate(settings)) return false;
-    if (anyPathTemplatePrefixStillMatches(observedPath, settings, settings.inaccuracyDegrees)) {
-      return true;
-    }
-    if (anyPathTemplatePrefixStillMatches(observedPath, settings, PREFIX_LOOSE_TOLERANCE_DEG)) {
-      return true;
-    }
-    if (strokePoints && strokePoints.length >= 2 && anyPathTemplateWithinHintDistance(strokePoints, settings)) {
-      return true;
-    }
-    return false;
-  }
-
-  function livePathTemplateHintDisplay(observedPath, strokePoints, settings) {
-    if (!hasAnyPathTemplate(settings) || !strokePoints || strokePoints.length < 2) {
-      return "";
-    }
-    const withinHint = pathTemplateAllWithinHint(strokePoints, settings);
-    if (withinHint.length >= 2) return "Multiple matches";
-    if (withinHint.length === 1) return ACTION_LABELS[withinHint[0].action];
-
-    const strict = settings.inaccuracyDegrees;
-    const loose = PREFIX_LOOSE_TOLERANCE_DEG;
-    const templates = settings.gesturePathTemplates;
-    const viable = [];
-    for (const action of ACTIONS) {
-      const tmpl = templates[action];
-      if (!tmpl || tmpl.length !== PATH_TEMPLATE_SAMPLES) continue;
-      if (
-        pathPrefixMatchesTemplateForTmpl(observedPath, tmpl, strict) ||
-        pathPrefixMatchesTemplateForTmpl(observedPath, tmpl, loose)
-      ) {
-        viable.push(action);
-      }
-    }
-    if (viable.length >= 2) return "Multiple matches";
-    if (viable.length === 1) return ACTION_LABELS[viable[0]];
-    return "";
-  }
-
-  function detectExactAction(observedPath, settings) {
-    const tol = settings.inaccuracyDegrees;
-    let bestAction = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    for (const action of ACTIONS) {
-      const expected = settings.gestures[action] || [];
-      if (expected.length !== observedPath.length) continue;
-      let allCompatible = true;
-      let score = 0;
-      for (let i = 0; i < observedPath.length; i += 1) {
-        const observed = observedPath[i];
-        const wanted = expected[i];
-        const diff = angularDifference(angleForDirection(observed), angleForDirection(wanted));
-        if (diff > tol) {
-          allCompatible = false;
-          break;
-        }
-        score += diff;
-      }
-      if (allCompatible && score < bestScore) {
-        bestScore = score;
-        bestAction = action;
-      }
-    }
-    return bestAction;
+  /** True if this action has a token sequence and/or a taught path template. */
+  function actionIsConfigured(action, settings) {
+    return actionHasTokens(action, settings) || actionHasValidTemplate(action, settings);
   }
 
   function gestureTokensToSvgViewSpec(tokens) {
@@ -920,47 +591,6 @@
     };
   }
 
-  function prefixMatchScore(observedPath, expected, inaccuracyDegrees) {
-    if (expected.length < observedPath.length) return null;
-    let score = 0;
-    for (let i = 0; i < observedPath.length; i += 1) {
-      if (!directionsCompatible(observedPath[i], expected[i], inaccuracyDegrees)) return null;
-      score += angularDifference(
-        angleForDirection(observedPath[i]),
-        angleForDirection(expected[i])
-      );
-    }
-    return score;
-  }
-
-  function liveGestureLabel(observedPath, settings) {
-    if (!observedPath.length) return "";
-    const tol = settings.inaccuracyDegrees;
-    const candidates = [];
-    for (const action of ACTIONS) {
-      const expected = settings.gestures[action] || [];
-      const sc = prefixMatchScore(observedPath, expected, tol);
-      if (sc !== null) candidates.push({ action, score: sc });
-    }
-    if (!candidates.length) {
-      for (const action of ACTIONS) {
-        const expected = settings.gestures[action] || [];
-        const sc = prefixMatchScore(observedPath, expected, PREFIX_LOOSE_TOLERANCE_DEG);
-        if (sc !== null) candidates.push({ action, score: sc });
-      }
-    }
-    if (!candidates.length) return "\u2014";
-    if (candidates.length === 1) return ACTION_LABELS[candidates[0].action];
-    candidates.sort((a, b) => {
-      if (a.score !== b.score) return a.score - b.score;
-      return ACTIONS.indexOf(a.action) - ACTIONS.indexOf(b.action);
-    });
-    const best = candidates[0].score;
-    const tied = candidates.filter((c) => c.score === best);
-    if (tied.length === 1) return ACTION_LABELS[tied[0].action];
-    return "Multiple matches";
-  }
-
   function sanitizeSettings(raw) {
     const base = raw && typeof raw === "object" ? raw : {};
     const rawGestures = base.gestures && typeof base.gestures === "object" ? base.gestures : {};
@@ -974,6 +604,7 @@
       gestures,
       gesturePathTemplates: sanitizeGesturePathTemplates(base.gesturePathTemplates),
       minSegmentPx: clampNumber(base.minSegmentPx, 8, 80, DEFAULT_SETTINGS.minSegmentPx),
+      pipeWidth: clampNumber(base.pipeWidth, 20, 200, DEFAULT_SETTINGS.pipeWidth),
       inaccuracyDegrees: clampNumber(base.inaccuracyDegrees, 10, 85, DEFAULT_SETTINGS.inaccuracyDegrees),
       trailColor: normalizeHexColor(base.trailColor, DEFAULT_SETTINGS.trailColor),
       trailWidth: clampNumber(base.trailWidth, 1, 16, DEFAULT_SETTINGS.trailWidth),
@@ -1006,6 +637,197 @@
 
   DEFAULT_SETTINGS.gesturePathTemplates = defaultGesturePathTemplates();
 
+  // --- Unified pipe-based gesture recognition ---
+
+  function pipeScaleBase(settings) {
+    return Math.max(40, settings.minSegmentPx * 3.0);
+  }
+
+  function buildPipeCenterline(action, settings, startPoint, scaleFactor) {
+    const s = Math.max(1, scaleFactor || 1);
+    const template = settings.gesturePathTemplates && settings.gesturePathTemplates[action];
+    const tokens = settings.gestures[action] || [];
+    if (template && Array.isArray(template) && template.length === PATH_TEMPLATE_SAMPLES) {
+      const t0 = template[0];
+      if (Array.isArray(t0) && t0.length === 2) {
+        let maxExtent = 0;
+        for (const p of template) {
+          if (!Array.isArray(p) || p.length !== 2) continue;
+          maxExtent = Math.max(maxExtent, Math.abs(p[0] - t0[0]), Math.abs(p[1] - t0[1]));
+        }
+        maxExtent = Math.max(maxExtent, 0.3);
+        const scale = pipeScaleBase(settings) * s / maxExtent;
+        const pts = [];
+        for (const p of template) {
+          if (!Array.isArray(p) || p.length !== 2) continue;
+          pts.push({
+            x: startPoint.x + (p[0] - t0[0]) * scale,
+            y: startPoint.y + (p[1] - t0[1]) * scale
+          });
+        }
+        if (pts.length >= 2) return pts;
+      }
+    }
+    if (Array.isArray(tokens) && tokens.length > 0) {
+      const step = pipeScaleBase(settings) * s;
+      const pts = [{ x: startPoint.x, y: startPoint.y }];
+      let x = startPoint.x;
+      let y = startPoint.y;
+      for (const token of tokens) {
+        const deg = DIRECTION_ANGLES[token];
+        if (deg == null) continue;
+        const rad = (deg * Math.PI) / 180;
+        x += Math.cos(rad) * step;
+        y += Math.sin(rad) * step;
+        pts.push({ x, y });
+      }
+      if (pts.length >= 2) return pts;
+    }
+    return null;
+  }
+
+  function computePipeRadius(scaleFactor, settings) {
+    const s = Math.max(1, scaleFactor || 1);
+    return settings.minSegmentPx * (settings.pipeWidth / 100) * Math.sqrt(s);
+  }
+
+  /**
+   * Find the closest point on `polyline` to `point`, optionally ignoring
+   * the polyline before `minArcLength` (used for forward-progress enforcement).
+   * For overlapping segments (e.g. D→U hairpin), the earlier segment wins at
+   * equal distance; the later segment takes over once the minArcLength constraint
+   * pushes the earlier segment's clamped projection further from the mouse.
+   */
+  function pointToPolylineInfo(point, polyline, minArcLength) {
+    if (!polyline || polyline.length < 2 || !point) {
+      return { distance: Infinity, progress: 0, arcLength: 0 };
+    }
+    const minArc = minArcLength > 0 ? minArcLength : 0;
+    let bestDist2 = Infinity;
+    let bestArc = 0;
+    let totalArc = 0;
+    for (let i = 0; i < polyline.length - 1; i += 1) {
+      const a = polyline[i];
+      const b = polyline[i + 1];
+      const vx = b.x - a.x;
+      const vy = b.y - a.y;
+      const segLen = Math.hypot(vx, vy);
+      if (segLen < 1e-6) continue;
+      const segEnd = totalArc + segLen;
+      if (segEnd < minArc) {
+        totalArc = segEnd;
+        continue;
+      }
+      const wx = point.x - a.x;
+      const wy = point.y - a.y;
+      let t = (wx * vx + wy * vy) / (segLen * segLen);
+      if (t < 0) t = 0;
+      if (t > 1) t = 1;
+      if (totalArc + segLen * t < minArc) {
+        t = Math.min(1, (minArc - totalArc) / segLen);
+      }
+      const px = a.x + vx * t;
+      const py = a.y + vy * t;
+      const dx = point.x - px;
+      const dy = point.y - py;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestDist2) {
+        bestDist2 = d2;
+        bestArc = totalArc + segLen * t;
+      }
+      totalArc = segEnd;
+    }
+    const progress = totalArc > 1e-6 ? bestArc / totalArc : 0;
+    return {
+      distance: Math.sqrt(bestDist2),
+      progress: Math.max(0, Math.min(1, progress)),
+      arcLength: bestArc
+    };
+  }
+
+  /**
+   * Build the initial pipe set for all configured gestures.
+   * Each pipe has a centerline (polyline in client coordinates) and tracks elimination / progress.
+   */
+  function createPipeMatchState(settings, startPoint, scaleFactor) {
+    const pipes = [];
+    for (const action of ACTIONS) {
+      if (!actionIsConfigured(action, settings)) continue;
+      const centerline = buildPipeCenterline(action, settings, startPoint, scaleFactor);
+      if (!centerline) continue;
+      pipes.push({ action, centerline, progress: 0, arcLength: 0, eliminated: false });
+    }
+    const radius = computePipeRadius(scaleFactor, settings);
+    return {
+      pipes,
+      radius,
+      startPoint: { x: startPoint.x, y: startPoint.y },
+      scaleFactor,
+      allEliminated: pipes.length === 0
+    };
+  }
+
+  /**
+   * Per-move update: rebuild geometry if scale changed, then test containment.
+   * Once a pipe is eliminated it stays eliminated.
+   */
+  function advancePipeMatchState(prevState, mousePoint, scaleFactor, settings) {
+    if (!prevState || prevState.allEliminated) return prevState;
+    let pipes = prevState.pipes;
+    let radius = prevState.radius;
+    const scaleChanged = Math.abs(scaleFactor - prevState.scaleFactor) >= 0.01;
+    if (scaleChanged) {
+      radius = computePipeRadius(scaleFactor, settings);
+      pipes = pipes.map((pipe) => {
+        if (pipe.eliminated) return pipe;
+        const centerline = buildPipeCenterline(pipe.action, settings, prevState.startPoint, scaleFactor);
+        return centerline ? { ...pipe, centerline } : { ...pipe, eliminated: true };
+      });
+    }
+    const regressionWindow = radius * 2;
+    const updated = pipes.map((pipe) => {
+      if (pipe.eliminated) return pipe;
+      const minArc = Math.max(0, (pipe.arcLength || 0) - regressionWindow);
+      const info = pointToPolylineInfo(mousePoint, pipe.centerline, minArc);
+      if (info.distance > radius) {
+        return { ...pipe, eliminated: true };
+      }
+      return {
+        ...pipe,
+        progress: Math.max(pipe.progress, info.progress),
+        arcLength: Math.max(pipe.arcLength || 0, info.arcLength)
+      };
+    });
+    const surviving = updated.filter((p) => !p.eliminated);
+    return {
+      pipes: updated,
+      radius,
+      startPoint: prevState.startPoint,
+      scaleFactor,
+      allEliminated: surviving.length === 0
+    };
+  }
+
+  /** At release, pick the surviving pipe with the best progress. */
+  function resolvePipeAction(state, minProgressFraction) {
+    if (!state || state.allEliminated) return null;
+    const minProg = minProgressFraction != null ? minProgressFraction : 0.3;
+    const surviving = state.pipes.filter((p) => !p.eliminated);
+    if (!surviving.length) return null;
+    surviving.sort((a, b) => {
+      if (Math.abs(a.progress - b.progress) > 0.01) return b.progress - a.progress;
+      return ACTIONS.indexOf(a.action) - ACTIONS.indexOf(b.action);
+    });
+    const best = surviving[0];
+    if (best.progress < minProg) return null;
+    return best.action;
+  }
+
+  function survivingPipeActions(state) {
+    if (!state) return [];
+    return state.pipes.filter((p) => !p.eliminated).map((p) => p.action);
+  }
+
   globalThis.NaviGesturesCommon = {
     VALID_DIRECTIONS,
     ACTIONS,
@@ -1016,17 +838,9 @@
     DEFAULT_SETTINGS,
     PATH_TEMPLATE_SAMPLES,
     PATH_MATCH_MIN_STROKE_PX,
-    PATH_MATCH_MAX_AVG_DIST,
-    PATH_MATCH_MAX_AVG_DIST_HINT,
     defaultGesturePathTemplates,
     polylineLength,
     normalizeStrokeToTemplate,
-    hasAnyPathTemplate,
-    pathTemplateBestMatch,
-    matchBestPathTemplate,
-    pathTemplateAllWithinHint,
-    livePathTemplateHintDisplay,
-    livePathTemplateLabel,
     gesturePathTemplateToSvgViewSpec,
     gesturePreviewArrowSpecFromTokens,
     gesturePreviewArrowSpecFromTemplate,
@@ -1041,14 +855,16 @@
     createGestureAnchorState,
     processGestureMove,
     collapseBridgeDiagonal,
-    directionsCompatible,
-    pathCanStillMatchAnyAction,
-    anyConfiguredGestureStillPossible,
-    PREFIX_LOOSE_TOLERANCE_DEG,
-    detectExactAction,
-    liveGestureLabel,
-    strokeToGesturePath,
+    actionIsConfigured,
     gestureTokensToSvgViewSpec,
-    sanitizeGesturePathTemplates
+    sanitizeGesturePathTemplates,
+    pipeScaleBase,
+    buildPipeCenterline,
+    computePipeRadius,
+    pointToPolylineInfo,
+    createPipeMatchState,
+    advancePipeMatchState,
+    resolvePipeAction,
+    survivingPipeActions
   };
 })();
