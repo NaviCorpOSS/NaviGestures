@@ -156,47 +156,6 @@
     return out;
   }
 
-  function gesturePathTemplateToSvgViewSpec(template) {
-    const pad = 8;
-    const strokePad = 2;
-    if (!template || template.length < 2) {
-      return { d: "M 4 20 L 20 4", viewBox: "0 0 24 24", empty: true };
-    }
-    const scale = 34;
-    const cx = 0;
-    const cy = 0;
-    const pts = template.map((p) => ({
-      x: p[0] * scale + cx,
-      y: p[1] * scale + cy,
-    }));
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const p of pts) {
-      minX = Math.min(minX, p.x);
-      minY = Math.min(minY, p.y);
-      maxX = Math.max(maxX, p.x);
-      maxY = Math.max(maxY, p.y);
-    }
-    const w = Math.max(maxX - minX, 1);
-    const h = Math.max(maxY - minY, 1);
-    const d = pts
-      .map((p, i) => {
-        const px = p.x - minX + pad + strokePad;
-        const py = p.y - minY + pad + strokePad;
-        return `${i === 0 ? "M" : "L"} ${px.toFixed(2)} ${py.toFixed(2)}`;
-      })
-      .join(" ");
-    const vbW = w + (pad + strokePad) * 2;
-    const vbH = h + (pad + strokePad) * 2;
-    return {
-      d,
-      viewBox: `0 0 ${vbW.toFixed(2)} ${vbH.toFixed(2)}`,
-      empty: false,
-    };
-  }
-
   function gestureTokensToPreviewPolyline(tokens, stepPx, uTurnSpreadPx) {
     const step = stepPx != null ? stepPx : 14;
     const spread = uTurnSpreadPx != null ? uTurnSpreadPx : 4;
@@ -397,16 +356,6 @@
     return out.length ? out : [...fallbackArray];
   }
 
-  function parseGestureInput(text, fallbackArray) {
-    if (typeof text !== "string") return [...fallbackArray];
-    const tokens = text
-      .toUpperCase()
-      .replace(/[-=>]/g, " ")
-      .split(/[\s,]+/)
-      .filter(Boolean);
-    return normalizeGestureArray(tokens, fallbackArray);
-  }
-
   function normalizeHexColor(input, fallbackColor) {
     if (typeof input !== "string") return fallbackColor;
     let value = input.trim();
@@ -600,55 +549,6 @@
       actionHasTokens(action, settings) ||
       actionHasValidTemplate(action, settings)
     );
-  }
-
-  function gestureTokensToSvgViewSpec(tokens) {
-    const step = 14;
-    const pad = 6;
-    const strokePad = 2;
-    if (!tokens || !tokens.length) {
-      return {
-        d: "M 4 20 L 20 4",
-        viewBox: "0 0 24 24",
-        empty: true,
-      };
-    }
-    let x = 0;
-    let y = 0;
-    const pts = [{ x: 0, y: 0 }];
-    for (const t of tokens) {
-      const v = directionVector(t);
-      const inv = 1 / Math.hypot(v.x, v.y);
-      x += v.x * inv * step;
-      y += v.y * inv * step;
-      pts.push({ x, y });
-    }
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const p of pts) {
-      minX = Math.min(minX, p.x);
-      minY = Math.min(minY, p.y);
-      maxX = Math.max(maxX, p.x);
-      maxY = Math.max(maxY, p.y);
-    }
-    const w = Math.max(maxX - minX, 1);
-    const h = Math.max(maxY - minY, 1);
-    const d = pts
-      .map((p, i) => {
-        const px = p.x - minX + pad + strokePad;
-        const py = p.y - minY + pad + strokePad;
-        return `${i === 0 ? "M" : "L"} ${px.toFixed(2)} ${py.toFixed(2)}`;
-      })
-      .join(" ");
-    const vbW = w + (pad + strokePad) * 2;
-    const vbH = h + (pad + strokePad) * 2;
-    return {
-      d,
-      viewBox: `0 0 ${vbW.toFixed(2)} ${vbH.toFixed(2)}`,
-      empty: false,
-    };
   }
 
   function sanitizeSettings(raw) {
@@ -1108,10 +1008,8 @@
     defaultGesturePathTemplates,
     polylineLength,
     normalizeStrokeToTemplate,
-    gesturePathTemplateToSvgViewSpec,
     gesturePreviewArrowSpecFromTokens,
     gesturePreviewArrowSpecFromTemplate,
-    parseGestureInput,
     normalizeGestureArray,
     normalizeHexColor,
     sanitizeSettings,
@@ -1123,7 +1021,6 @@
     processGestureMove,
     collapseBridgeDiagonal,
     actionIsConfigured,
-    gestureTokensToSvgViewSpec,
     sanitizeGesturePathTemplates,
     pipeScaleBase,
     buildPipeCenterline,
