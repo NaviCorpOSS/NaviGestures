@@ -13,8 +13,13 @@
   const trailWidthInput = document.getElementById("trailWidth");
   const triggerMouseButtonInput = document.getElementById("triggerMouseButton");
   const triggerModifierInput = document.getElementById("triggerModifier");
-  const rockerMiddleLeftActionInput = document.getElementById("rockerMiddleLeftAction");
-  const rockerMiddleRightActionInput = document.getElementById("rockerMiddleRightAction");
+  const rockerMiddleLeftActionInput = document.getElementById(
+    "rockerMiddleLeftAction",
+  );
+  const rockerMiddleRightActionInput = document.getElementById(
+    "rockerMiddleRightAction",
+  );
+  const trainingModeInput = document.getElementById("trainingMode");
   const showDebugLogWindowInput = document.getElementById("showDebugLogWindow");
   const resetBtn = document.getElementById("resetBtn");
   const statusEl = document.getElementById("status");
@@ -90,7 +95,10 @@
   }
 
   function syncColorInputs(rawColor) {
-    const color = common.normalizeHexColor(rawColor, common.DEFAULT_SETTINGS.trailColor);
+    const color = common.normalizeHexColor(
+      rawColor,
+      common.DEFAULT_SETTINGS.trailColor,
+    );
     trailColorPickerInput.value = color;
     trailColorHexInput.value = color;
   }
@@ -154,7 +162,17 @@
     return px / pxPerU;
   }
 
-  function appendGestureArrowHead(ns, svg, x1, y1, x2, y2, arrowLenU, halfU, edgeU) {
+  function appendGestureArrowHead(
+    ns,
+    svg,
+    x1,
+    y1,
+    x2,
+    y2,
+    arrowLenU,
+    halfU,
+    edgeU,
+  ) {
     const dx = x2 - x1;
     const dy = y2 - y1;
     const dlen = Math.hypot(dx, dy);
@@ -170,7 +188,7 @@
     const poly = document.createElementNS(ns, "polygon");
     poly.setAttribute(
       "points",
-      `${tipX},${tipY} ${bx + px * halfU},${by + py * halfU} ${bx - px * halfU},${by - py * halfU}`
+      `${tipX},${tipY} ${bx + px * halfU},${by + py * halfU} ${bx - px * halfU},${by - py * halfU}`,
     );
     poly.setAttribute("fill", "#31d0ff");
     poly.setAttribute("stroke", "#070a12");
@@ -191,10 +209,25 @@
     const D = PREVIEW_DISPLAY_PX;
     const lineU = pxThicknessToUserUnits(TARGET_LINE_PX, D, vbW, vbH);
     const circleRU = pxThicknessToUserUnits(TARGET_CIRCLE_R_PX, D, vbW, vbH);
-    const circleSU = pxThicknessToUserUnits(TARGET_CIRCLE_STROKE_PX, D, vbW, vbH);
+    const circleSU = pxThicknessToUserUnits(
+      TARGET_CIRCLE_STROKE_PX,
+      D,
+      vbW,
+      vbH,
+    );
     const arrowLenU = pxThicknessToUserUnits(TARGET_ARROW_LEN_PX, D, vbW, vbH);
-    const arrowHalfU = pxThicknessToUserUnits(TARGET_ARROW_HALF_PX, D, vbW, vbH);
-    const arrowEdgeU = pxThicknessToUserUnits(TARGET_ARROW_EDGE_PX, D, vbW, vbH);
+    const arrowHalfU = pxThicknessToUserUnits(
+      TARGET_ARROW_HALF_PX,
+      D,
+      vbW,
+      vbH,
+    );
+    const arrowEdgeU = pxThicknessToUserUnits(
+      TARGET_ARROW_EDGE_PX,
+      D,
+      vbW,
+      vbH,
+    );
 
     const pathBg = document.createElementNS(ns, "path");
     pathBg.setAttribute("class", "gesture-path");
@@ -229,7 +262,7 @@
           seg.y2,
           arrowLenU,
           arrowHalfU,
-          arrowEdgeU
+          arrowEdgeU,
         );
       }
     }
@@ -242,7 +275,9 @@
     const spec =
       tmpl && tmpl.length
         ? common.gesturePreviewArrowSpecFromTemplate(tmpl)
-        : common.gesturePreviewArrowSpecFromTokens(gestureTokensState[action] || []);
+        : common.gesturePreviewArrowSpecFromTokens(
+            gestureTokensState[action] || [],
+          );
     applyGesturePreviewSvg(svg, spec);
   }
 
@@ -275,7 +310,7 @@
       hit.className = "gesture-preview-btn";
       hit.setAttribute(
         "aria-label",
-        `Edit gesture for ${common.ACTION_LABELS[action]} — click to teach or restore default`
+        `Edit gesture for ${common.ACTION_LABELS[action]} — click to teach or restore default`,
       );
 
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -306,7 +341,9 @@
   }
 
   function renderSettings(settings) {
-    gesturePathTemplatesState = common.sanitizeGesturePathTemplates(settings.gesturePathTemplates);
+    gesturePathTemplatesState = common.sanitizeGesturePathTemplates(
+      settings.gesturePathTemplates,
+    );
     for (const action of common.ACTIONS) {
       gestureTokensState[action] = [...(settings.gestures[action] || [])];
       updateGestureRowPreview(action);
@@ -320,18 +357,22 @@
     triggerModifierInput.value = settings.triggerModifier;
     rockerMiddleLeftActionInput.value = settings.rockerMiddleLeftAction;
     rockerMiddleRightActionInput.value = settings.rockerMiddleRightAction;
+    trainingModeInput.checked = !!settings.trainingMode;
     showDebugLogWindowInput.checked = !!settings.showDebugLogWindow;
   }
 
   function collectSettingsFromForm() {
     const gestures = {};
     for (const action of common.ACTIONS) {
-      if (gesturePathTemplatesState[action] && gesturePathTemplatesState[action].length) {
+      if (
+        gesturePathTemplatesState[action] &&
+        gesturePathTemplatesState[action].length
+      ) {
         gestures[action] = [];
       } else {
         gestures[action] = common.normalizeGestureArray(
           gestureTokensState[action],
-          common.DEFAULT_SETTINGS.gestures[action]
+          common.DEFAULT_SETTINGS.gestures[action],
         );
       }
     }
@@ -348,13 +389,16 @@
       triggerModifier: triggerModifierInput.value,
       rockerMiddleLeftAction: rockerMiddleLeftActionInput.value,
       rockerMiddleRightAction: rockerMiddleRightActionInput.value,
-      showDebugLogWindow: showDebugLogWindowInput.checked
+      trainingMode: trainingModeInput.checked,
+      showDebugLogWindow: showDebugLogWindowInput.checked,
     });
   }
 
   async function loadAndRender() {
     const data = await storageGet("settings");
-    const settings = common.sanitizeSettings(data.settings || common.DEFAULT_SETTINGS);
+    const settings = common.sanitizeSettings(
+      data.settings || common.DEFAULT_SETTINGS,
+    );
     renderSettings(settings);
   }
 
@@ -387,7 +431,7 @@
   trailColorHexInput.addEventListener("input", () => {
     const normalized = common.normalizeHexColor(
       trailColorHexInput.value,
-      common.DEFAULT_SETTINGS.trailColor
+      common.DEFAULT_SETTINGS.trailColor,
     );
     if (normalized !== trailColorHexInput.value.toLowerCase()) return;
     trailColorPickerInput.value = normalized;
@@ -428,7 +472,10 @@
       setStatus("Gesture saved.");
       renderSettings(settings);
     } catch (_) {
-      setStatus("Gesture updated on this page but could not write storage.", true);
+      setStatus(
+        "Gesture updated on this page but could not write storage.",
+        true,
+      );
     }
   });
 
@@ -461,7 +508,7 @@
       e.preventDefault();
       e.stopPropagation();
     },
-    true
+    true,
   );
 
   teachCanvas.addEventListener("pointerdown", (e) => {
@@ -481,7 +528,9 @@
     teachPoints.push({ x: e.clientX, y: e.clientY });
     redrawTeachStroke();
     teachPreview.textContent =
-      teachPoints.length > 2 ? "Drawing\u2026 release to finish." : "Draw a gesture\u2026";
+      teachPoints.length > 2
+        ? "Drawing\u2026 release to finish."
+        : "Draw a gesture\u2026";
     e.preventDefault();
   });
 
@@ -491,7 +540,10 @@
     try {
       if (e.pointerId != null) teachCanvas.releasePointerCapture(e.pointerId);
     } catch (_) {}
-    const minPx = Math.max(getMinSegmentPxFromForm(), common.PATH_MATCH_MIN_STROKE_PX);
+    const minPx = Math.max(
+      getMinSegmentPxFromForm(),
+      common.PATH_MATCH_MIN_STROKE_PX,
+    );
     const pts = teachPoints.map((p) => ({ x: p.x, y: p.y }));
     const len = common.polylineLength(pts);
     teachLastStroke = { template: null };

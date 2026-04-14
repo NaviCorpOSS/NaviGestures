@@ -29,6 +29,8 @@
   let gesturePipeScale = 1;
   let gesturePipeScaleLocked = false;
   let gestureFirstSegmentMaxProjection = 0;
+  /** True after curve-based scale boost was applied; cleared when token path shows a sharp corner. */
+  let gestureCurveBoostActive = false;
   let gestureStartClientPoint = null;
   let clearTrailTimer = null;
   let trailLastPoint = null;
@@ -48,6 +50,8 @@
   /** Inner node inside shadow root (text + border); host handles position and zoom scale. */
   let gestureHintPillEl = null;
   let strokePoints = [];
+  let gesturePoints = [];
+  let gestureZoomFactor = 1;
   let overlayViewportListener = null;
   /** From `tabs.getZoom` (Ctrl+/- page zoom); combined with visual viewport pinch in `getOverlayZoomCompensationFactor`. */
   let cachedTabZoomFactor = 1;
@@ -67,7 +71,11 @@
 
   function nowTimeLabel() {
     const d = new Date();
-    return d.toLocaleTimeString([], { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
+    return (
+      d.toLocaleTimeString([], { hour12: false }) +
+      "." +
+      String(d.getMilliseconds()).padStart(3, "0")
+    );
   }
 
   function appendDebugLog(message) {
@@ -82,7 +90,8 @@
   }
 
   function createDebugPanel() {
-    if (!settings.showDebugLogWindow || debugPanel || !document.documentElement) return;
+    if (!settings.showDebugLogWindow || debugPanel || !document.documentElement)
+      return;
     const uid = randomNaviGesturesUiSuffix();
     const host = document.createElement("div");
     host.id = `ng-dbg-host-${uid}`;
@@ -216,7 +225,8 @@
     collapseBtn.addEventListener("click", () => {
       debugCollapsed = !debugCollapsed;
       debugLogBody.style.display = debugCollapsed ? "none" : "";
-      if (debugCandidatesEl) debugCandidatesEl.style.display = debugCollapsed ? "none" : "";
+      if (debugCandidatesEl)
+        debugCandidatesEl.style.display = debugCollapsed ? "none" : "";
       shell.classList.toggle("ng-dbg-collapsed", debugCollapsed);
       collapseBtn.textContent = debugCollapsed ? "Show" : "Hide";
       applyDebugPanelZoomIndependence();
@@ -348,12 +358,15 @@
 
   async function loadSettings() {
     const data = await storageGet("settings");
-    settings = common.sanitizeSettings(data.settings || common.DEFAULT_SETTINGS);
+    settings = common.sanitizeSettings(
+      data.settings || common.DEFAULT_SETTINGS,
+    );
     applyTrailStyle();
     syncDebugPanelVisibility();
-    requestTabZoomFromBackground();
+    await requestTabZoomFromBackground();
+    refreshOverlaysForZoom();
     appendDebugLog(
-      `Settings loaded: minSegmentPx=${settings.minSegmentPx}, inaccuracy=${settings.inaccuracyDegrees}°, trigger=${settings.triggerMouseButton}, rockerLeft=${settings.rockerMiddleLeftAction}, rockerRight=${settings.rockerMiddleRightAction}`
+      `Settings loaded: minSegmentPx=${settings.minSegmentPx}, inaccuracy=${settings.inaccuracyDegrees}°, trainingMode=${settings.trainingMode}, trigger=${settings.triggerMouseButton}, rockerLeft=${settings.rockerMiddleLeftAction}, rockerRight=${settings.rockerMiddleRightAction}`,
     );
   }
 
@@ -376,35 +389,190 @@
     return { x: Math.cos(rad), y: Math.sin(rad) };
   }
 
+  /**
+   * Resample the stroke at fixed arc-length spacing so turn angles reflect
+   * geometry instead of 8-way token jitter.
+   */
+  function resampleStrokeByArcLength(strokePoints, stepPx) {
+    if (!strokePoints || strokePoints.length < 2)
+      return strokePoints ? [...strokePoints] : [];
+    const pts = strokePoints;
+    const out = [{ x: pts[0].x, y: pts[0].y }];
+    let covered = 0;
+    let nextTarget = stepPx;
+
+    for (let i = 1; i < pts.length; i += 1) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+      if (segLen < 1e-6) continue;
+      const segStart = covered;
+      const segEnd = covered + segLen;
+      while (nextTarget < segEnd - 1e-6) {
+        const dFromA = nextTarget - segStart;
+        const t = dFromA / segLen;
+        out.push({
+          x: a.x + (b.x - a.x) * t,
+          y: a.y + (b.y - a.y) * t,
+        });
+        nextTarget += stepPx;
+      }
+      covered = segEnd;
+    }
+    const L = pts[pts.length - 1];
+    const lastOut = out[out.length - 1];
+    if (Math.hypot(L.x - lastOut.x, L.y - lastOut.y) > 1e-3) {
+      out.push({ x: L.x, y: L.y });
+    }
+    console.log("resampleStrokeByArcLength, out.length:", out.length);
+    return out;
+  }
+
+  /** Turning angle (signed deg) at each interior resampled vertex. */
+  function strokeTurnMetricsAtSamples(sampled) {
+    let maxAbsDeg = 0;
+    let absSumDeg = 0;
+    let signedSumDeg = 0;
+    if (!sampled || sampled.length < 3) {
+      console.log(
+        "strokeTurnMetricsAtSamples, sampled.length < 3 - returning 0",
+      );
+      return { maxAbsDeg: 0, absSumDeg: 0, signedSumDeg: 0 };
+    }
+    for (let i = 1; i < sampled.length - 1; i += 1) {
+      const ax = sampled[i].x - sampled[i - 1].x;
+      const ay = sampled[i].y - sampled[i - 1].y;
+      const bx = sampled[i + 1].x - sampled[i].x;
+      const by = sampled[i + 1].y - sampled[i].y;
+      const la = Math.hypot(ax, ay);
+      const lb = Math.hypot(bx, by);
+      if (la < 1e-3 || lb < 1e-3) continue;
+      const dot = ax * bx + ay * by;
+      const cross = ax * by - ay * bx;
+      const deg = (Math.atan2(cross, dot) * 180) / Math.PI;
+      signedSumDeg += deg;
+      const ad = Math.abs(deg);
+      absSumDeg += ad;
+      maxAbsDeg = Math.max(maxAbsDeg, ad);
+    }
+    console.log(
+      "strokeTurnMetricsAtSamples, maxAbsDeg:",
+      maxAbsDeg,
+      "absSumDeg:",
+      absSumDeg,
+      "signedSumDeg:",
+      signedSumDeg,
+    );
+    return { maxAbsDeg, absSumDeg, signedSumDeg };
+  }
+
+  /**
+   * True when the physical stroke bends smoothly in one direction (coherent
+   * signed curvature), with no single sharp corner — so circles grow with
+   * radius, while straight lines, zig-zag jitter, and L-corners stay on
+   * first-axis projection sizing.
+   */
+  function strokeShowsGentleDistributedCurvature(strokePoints, settings) {
+    if (!strokePoints || strokePoints.length < 3) return false;
+    const totalLen = common.polylineLength(strokePoints);
+    const stepPx = Math.max(7, settings.minSegmentPx * 0.42);
+    if (totalLen < stepPx * 1.05) return false;
+    const sampled = resampleStrokeByArcLength(strokePoints, stepPx);
+    if (sampled.length < 4) return false;
+    const m = strokeTurnMetricsAtSamples(sampled);
+    if (m.absSumDeg < 1e-6) return false;
+    const coherence = Math.abs(m.signedSumDeg) / m.absSumDeg;
+    const maxCornerDeg = 48;
+    const minBendDeg = 22;
+    return (
+      m.maxAbsDeg <= maxCornerDeg &&
+      m.absSumDeg >= minBendDeg &&
+      coherence >= 0.55
+    );
+  }
+
+  /** Any >45° turn in the quantized path (e.g. D→R) — disables curve-based scale boost. */
+  function pathHasSharpCorner(path) {
+    if (!path || path.length < 2) return false;
+    for (let i = 1; i < path.length; i += 1) {
+      if (
+        common.angularDifference(
+          common.angleForDirection(path[i - 1]),
+          common.angleForDirection(path[i]),
+        ) > 45
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function updateGesturePipeScaleFromStroke() {
-    if (gesturePipeScaleLocked) return false;
-    if (!gestureStartClientPoint || path.length === 0 || strokePoints.length === 0) return false;
+    if (
+      !gestureStartClientPoint ||
+      path.length === 0 ||
+      gesturePoints.length === 0
+    )
+      return false;
+
+    const sharp = pathHasSharpCorner(path);
+    const curveStroke = strokeShowsGentleDistributedCurvature(
+      gesturePoints,
+      settings,
+    );
+    const useCurve = !sharp && curveStroke;
+
+    const base = common.pipeScaleBase(settings);
     const firstDir = path[0];
+    const firstAngle = common.angleForDirection(firstDir);
+    const turnedAwayFromFirst =
+      path.length >= 2 &&
+      path.some(
+        (dir, i) =>
+          i > 0 &&
+          common.angularDifference(firstAngle, common.angleForDirection(dir)) >
+            45,
+      );
+
+    if (turnedAwayFromFirst && !useCurve) {
+      gesturePipeScaleLocked = true;
+    }
+    if (gesturePipeScaleLocked && !useCurve) return false;
+
     const u = directionUnitVector(firstDir);
-    const p = strokePoints[strokePoints.length - 1];
+    const p = gesturePoints[gesturePoints.length - 1];
     const dx = p.x - gestureStartClientPoint.x;
     const dy = p.y - gestureStartClientPoint.y;
     const proj = dx * u.x + dy * u.y;
-    if (proj > gestureFirstSegmentMaxProjection) {
+    const maxDist = Math.hypot(dx, dy);
+    const strokeLen = common.polylineLength(gesturePoints);
+    const radiusHintFromStroke = strokeLen / (2 * Math.PI);
+
+    if (sharp && gestureCurveBoostActive) {
+      gestureCurveBoostActive = false;
       gestureFirstSegmentMaxProjection = proj;
+      gesturePipeScale = clampGesturePipeScale(proj / base);
     }
-    const base = common.pipeScaleBase(settings);
-    const nextScale = clampGesturePipeScale(gestureFirstSegmentMaxProjection / base);
+
+    const scaleLen = useCurve
+      ? Math.max(proj, maxDist, radiusHintFromStroke)
+      : proj;
+    if (useCurve) gestureCurveBoostActive = true;
+
+    if (scaleLen > gestureFirstSegmentMaxProjection) {
+      gestureFirstSegmentMaxProjection = scaleLen;
+    }
+
+    const nextScale = clampGesturePipeScale(
+      gestureFirstSegmentMaxProjection / base,
+    );
     const changed = Math.abs(nextScale - gesturePipeScale) >= 0.05;
     if (changed) gesturePipeScale = nextScale;
-    if (path.length >= 2) {
-      const firstAngle = common.angleForDirection(path[0]);
-      for (let i = 1; i < path.length; i += 1) {
-        if (common.angularDifference(firstAngle, common.angleForDirection(path[i])) > 90) {
-          gesturePipeScaleLocked = true;
-          break;
-        }
-      }
-    }
     return changed;
   }
 
   function createGesturePipeCanvas() {
+    console.log("createGesturePipeCanvas");
     if (gesturePipeCanvas || !document.documentElement) return;
     gesturePipeCanvas = document.createElement("canvas");
     gesturePipeCanvas.setAttribute("aria-hidden", "true");
@@ -446,8 +614,14 @@
     const cssHeight = viewport ? viewport.height : window.innerHeight;
     trailPixelRatio = window.devicePixelRatio || 1;
     if (gesturePipeCanvas && gesturePipeCtx) {
-      gesturePipeCanvas.width = Math.max(1, Math.floor(cssWidth * trailPixelRatio));
-      gesturePipeCanvas.height = Math.max(1, Math.floor(cssHeight * trailPixelRatio));
+      gesturePipeCanvas.width = Math.max(
+        1,
+        Math.floor(cssWidth * trailPixelRatio),
+      );
+      gesturePipeCanvas.height = Math.max(
+        1,
+        Math.floor(cssHeight * trailPixelRatio),
+      );
     }
     trailCanvas.width = Math.max(1, Math.floor(cssWidth * trailPixelRatio));
     trailCanvas.height = Math.max(1, Math.floor(cssHeight * trailPixelRatio));
@@ -456,17 +630,32 @@
   }
 
   function toTrailPoint(clientX, clientY) {
-    const viewport = window.visualViewport;
-    if (!viewport) return { x: clientX, y: clientY };
+    return { x: clientX, y: clientY };
+  }
+
+  function toGesturePoint(clientX, clientY) {
+    const z = tracking ? gestureZoomFactor : getOverlayZoomCompensationFactor();
+    if (Math.abs(z - 1) < 0.02) return { x: clientX, y: clientY };
     return {
-      x: (clientX + viewport.offsetLeft) * viewport.scale,
-      y: (clientY + viewport.offsetTop) * viewport.scale
+      x: clientX * z,
+      y: clientY * z,
+    };
+  }
+
+  function gesturePointToTrailPoint(point) {
+    if (!point) return { x: 0, y: 0 };
+    const z = tracking ? gestureZoomFactor : getOverlayZoomCompensationFactor();
+    if (Math.abs(z - 1) < 0.02) return { x: point.x, y: point.y };
+    return {
+      x: point.x / z,
+      y: point.y / z,
     };
   }
 
   function applyTrailStyle() {
     if (!trailCtx) return;
-    const lineW = settings.trailWidth * trailPixelRatio;
+    const lineW =
+      settings.trailWidth * trailPixelRatio * gestureOverlayZoomBoost();
     trailCtx.lineWidth = lineW;
     trailCtx.lineCap = "round";
     trailCtx.lineJoin = "round";
@@ -479,7 +668,8 @@
 
   function trailStrokeStyle(color) {
     if (!trailCtx) return;
-    const lineW = settings.trailWidth * trailPixelRatio;
+    const lineW =
+      settings.trailWidth * trailPixelRatio * gestureOverlayZoomBoost();
     trailCtx.lineWidth = lineW;
     trailCtx.lineCap = "round";
     trailCtx.lineJoin = "round";
@@ -492,9 +682,14 @@
 
   function drawCenterline(points, color, widthPx, maxLen) {
     if (!points || points.length < 2) return;
-    let remaining = Number.isFinite(maxLen) ? Math.max(0, maxLen) : Number.POSITIVE_INFINITY;
+    let remaining = Number.isFinite(maxLen)
+      ? Math.max(0, maxLen)
+      : Number.POSITIVE_INFINITY;
     gesturePipeCtx.beginPath();
-    gesturePipeCtx.moveTo(points[0].x * trailPixelRatio, points[0].y * trailPixelRatio);
+    gesturePipeCtx.moveTo(
+      points[0].x * trailPixelRatio,
+      points[0].y * trailPixelRatio,
+    );
     for (let i = 1; i < points.length; i += 1) {
       const a = points[i - 1];
       const b = points[i];
@@ -522,23 +717,31 @@
 
   function drawPipe(pts, action, radiusPx) {
     if (!pts || pts.length < 2) return;
+    const boost = gestureOverlayZoomBoost();
     drawCenterline(pts, pipeColorForAction(action, 0.13), radiusPx * 2);
     drawCenterline(
       pts,
       pipeColorForAction(action, 0.8),
-      Math.max(1.2, settings.trailWidth * 0.75) * trailPixelRatio
+      Math.max(1.2, settings.trailWidth * 0.75) * trailPixelRatio * boost,
     );
   }
 
   function redrawGesturePipeOverlay() {
     if (!gesturePipeCtx || !gesturePipeCanvas) return;
-    gesturePipeCtx.clearRect(0, 0, gesturePipeCanvas.width, gesturePipeCanvas.height);
+    gesturePipeCtx.clearRect(
+      0,
+      0,
+      gesturePipeCanvas.width,
+      gesturePipeCanvas.height,
+    );
+    if (!settings.trainingMode) return;
     if (!tracking || !pipeState) return;
     const surviving = pipeState.pipes.filter((p) => !p.eliminated);
     if (!surviving.length) return;
-    const radiusPx = pipeState.radius * trailPixelRatio;
+    const radiusPx =
+      pipeState.radius * trailPixelRatio * gestureOverlayZoomBoost();
     for (const pipe of surviving) {
-      const trailPts = pipe.centerline.map((p) => toTrailPoint(p.x, p.y));
+      const trailPts = pipe.centerline.map((p) => gesturePointToTrailPoint(p));
       drawPipe(trailPts, pipe.action, radiusPx);
     }
   }
@@ -565,7 +768,12 @@
 
   function clearGesturePipeOverlay() {
     if (gesturePipeCtx && gesturePipeCanvas) {
-      gesturePipeCtx.clearRect(0, 0, gesturePipeCanvas.width, gesturePipeCanvas.height);
+      gesturePipeCtx.clearRect(
+        0,
+        0,
+        gesturePipeCanvas.width,
+        gesturePipeCanvas.height,
+      );
     }
   }
 
@@ -614,32 +822,57 @@
   function refreshOverlaysForZoom() {
     applyGestureHintZoomIndependence();
     applyDebugPanelZoomIndependence();
+    if (trailCtx) {
+      applyTrailStyle();
+      if (tracking && strokePoints.length >= 2) redrawTrailSegmented();
+      redrawGesturePipeOverlay();
+    }
   }
 
   function requestTabZoomFromBackground() {
-    try {
-      if (isBrowserApi) {
-        api.runtime
-          .sendMessage({ type: "navigestures-get-tab-zoom" })
-          .then((response) => {
-            if (response && typeof response.zoom === "number" && response.zoom > 0) {
-              cachedTabZoomFactor = response.zoom;
-            }
-            refreshOverlaysForZoom();
-          })
-          .catch(() => refreshOverlaysForZoom());
-      } else {
-        api.runtime.sendMessage({ type: "navigestures-get-tab-zoom" }, (response) => {
-          const err = api.runtime && api.runtime.lastError;
-          if (!err && response && typeof response.zoom === "number" && response.zoom > 0) {
-            cachedTabZoomFactor = response.zoom;
-          }
-          refreshOverlaysForZoom();
-        });
+    return new Promise((resolve) => {
+      try {
+        if (isBrowserApi) {
+          api.runtime
+            .sendMessage({ type: "navigestures-get-tab-zoom" })
+            .then((response) => {
+              if (
+                response &&
+                typeof response.zoom === "number" &&
+                response.zoom > 0
+              ) {
+                cachedTabZoomFactor = response.zoom;
+              }
+              refreshOverlaysForZoom();
+              resolve();
+            })
+            .catch(() => {
+              refreshOverlaysForZoom();
+              resolve();
+            });
+        } else {
+          api.runtime.sendMessage(
+            { type: "navigestures-get-tab-zoom" },
+            (response) => {
+              const err = api.runtime && api.runtime.lastError;
+              if (
+                !err &&
+                response &&
+                typeof response.zoom === "number" &&
+                response.zoom > 0
+              ) {
+                cachedTabZoomFactor = response.zoom;
+              }
+              refreshOverlaysForZoom();
+              resolve();
+            },
+          );
+        }
+      } catch (_) {
+        refreshOverlaysForZoom();
+        resolve();
       }
-    } catch (_) {
-      refreshOverlaysForZoom();
-    }
+    });
   }
 
   function getVisualViewportPinchScale() {
@@ -659,16 +892,20 @@
   }
 
   /**
-   * Effective zoom for counter-scaling fixed UI. Desktop Ctrl+/- is exposed as `tabs.getZoom`;
-   * `visualViewport.scale` covers pinch; layout ratio is a fallback when the others sit at 1.
+   * Effective zoom for counter-scaling fixed UI and normalizing gesture recognition.
+   * Prefer explicit tab zoom for desktop page zoom; fall back to visual viewport scale
+   * for pinch zoom and finally to a layout-derived hint when neither is available.
    */
   function getOverlayZoomCompensationFactor() {
-    const zTab = typeof cachedTabZoomFactor === "number" && cachedTabZoomFactor > 0 ? cachedTabZoomFactor : 1;
+    const zTab =
+      typeof cachedTabZoomFactor === "number" && cachedTabZoomFactor > 0
+        ? cachedTabZoomFactor
+        : 1;
     const zPinch = getVisualViewportPinchScale();
     const zLayout = getLayoutViewportZoomHint();
 
     if (Math.abs(zTab - 1) >= 0.02) {
-      return zTab * (Math.abs(zPinch - 1) >= 0.02 ? zPinch : 1);
+      return zTab;
     }
     if (Math.abs(zPinch - 1) >= 0.02) {
       return zPinch;
@@ -677,6 +914,16 @@
       return zLayout;
     }
     return 1;
+  }
+
+  /**
+   * Tab / pinch zoom shrinks CSS pixels on screen; scale stroke thickness so trail
+   * and pipe walls stay readable without CSS transform (which breaks cursor alignment).
+   */
+  function gestureOverlayZoomBoost() {
+    const z = getOverlayZoomCompensationFactor();
+    if (Math.abs(z - 1) < 0.02) return 1;
+    return 1 / z;
   }
 
   function applyGestureHintZoomIndependence() {
@@ -774,11 +1021,39 @@
     gestureHintPillEl = null;
   }
 
+  function pathIsPrefixOfGestureTokens(path, tokens) {
+    if (
+      !path ||
+      !path.length ||
+      !tokens ||
+      !Array.isArray(tokens) ||
+      !tokens.length
+    )
+      return false;
+    if (path.length > tokens.length) return false;
+    for (let i = 0; i < path.length; i += 1) {
+      if (path[i] !== tokens[i]) return false;
+    }
+    return true;
+  }
+
+  /** When exactly one survivor's token path still matches the drawn direction prefix. */
+  function dominantSurvivingByTokenPrefix(surviving, path, settings) {
+    if (!surviving || surviving.length < 2 || !path || !path.length)
+      return null;
+    const matches = surviving.filter((a) =>
+      pathIsPrefixOfGestureTokens(path, settings.gestures[a] || []),
+    );
+    return matches.length === 1 ? matches[0] : null;
+  }
+
   function syncGestureHint(clientX, clientY) {
     if (!gestureHintEl || !gestureHintPillEl) return;
     applyGestureHintZoomIndependence();
-    const offsetX = 14;
-    const offsetY = 28;
+    const zoomBoost = gestureOverlayZoomBoost();
+    const offsetX = 14 * zoomBoost;
+    const offsetY = 28 * zoomBoost;
+    const edgePad = 8 * zoomBoost;
     gestureHintEl.style.left = `${clientX + offsetX}px`;
     gestureHintEl.style.top = `${clientY + offsetY}px`;
 
@@ -794,7 +1069,19 @@
       hintText = common.ACTION_LABELS[surviving[0]] || surviving[0];
       borderColor = HINT_BORDER_MATCHED;
     } else {
-      hintText = "Multiple Matches";
+      const dominant = dominantSurvivingByTokenPrefix(
+        surviving,
+        path,
+        settings,
+      );
+      if (dominant) {
+        const label = common.ACTION_LABELS[dominant] || dominant;
+        const extra = surviving.length - 1;
+        hintText = extra > 0 ? `${label} +${extra}` : label;
+        borderColor = HINT_BORDER_MATCHED;
+      } else {
+        hintText = "Multiple Matches";
+      }
     }
 
     gestureHintPillEl.style.borderColor = borderColor;
@@ -804,11 +1091,11 @@
     const rect = gestureHintEl.getBoundingClientRect();
     let left = clientX + offsetX;
     let top = clientY + offsetY;
-    if (rect.right > window.innerWidth - 8) {
-      left = Math.max(8, window.innerWidth - rect.width - 8);
+    if (rect.right > window.innerWidth - edgePad) {
+      left = Math.max(edgePad, window.innerWidth - rect.width - edgePad);
     }
-    if (rect.bottom > window.innerHeight - 8) {
-      top = Math.max(8, clientY - offsetY - rect.height);
+    if (rect.bottom > window.innerHeight - edgePad) {
+      top = Math.max(edgePad, clientY - offsetY - rect.height);
     }
     gestureHintEl.style.left = `${left}px`;
     gestureHintEl.style.top = `${top}px`;
@@ -816,15 +1103,27 @@
 
   function beginGestureTracking(startX, startY) {
     tracking = true;
+    blockGestureUntilRelease = false;
     path = [];
     strokePoints = [{ x: startX, y: startY }];
+    gestureZoomFactor = getOverlayZoomCompensationFactor();
+    const startGesturePoint = toGesturePoint(startX, startY);
+    gesturePoints = [startGesturePoint];
     totalDistance = 0;
-    anchorPoint = { x: startX, y: startY };
-    gestureStartClientPoint = { x: startX, y: startY };
+    anchorPoint = { x: startGesturePoint.x, y: startGesturePoint.y };
+    gestureStartClientPoint = {
+      x: startGesturePoint.x,
+      y: startGesturePoint.y,
+    };
     gesturePipeScale = 1;
     gesturePipeScaleLocked = false;
     gestureFirstSegmentMaxProjection = 0;
-    pipeState = common.createPipeMatchState(settings, { x: startX, y: startY }, gesturePipeScale);
+    gestureCurveBoostActive = false;
+    pipeState = common.createPipeMatchState(
+      settings,
+      { x: startGesturePoint.x, y: startGesturePoint.y },
+      gesturePipeScale,
+    );
     redrawGesturePipeOverlay();
     ensureGestureHint();
     updateOverlayViewportListeners();
@@ -832,19 +1131,24 @@
     startTrail(startPoint.x, startPoint.y);
     applyTrailStyle();
     updateDebugCandidatesBar();
-    appendDebugLog(`Gesture start at (${Math.round(startX)}, ${Math.round(startY)})`);
+    appendDebugLog(
+      `Gesture start at (${Math.round(startX)}, ${Math.round(startY)})`,
+    );
   }
 
   function resetGestureState() {
     tracking = false;
     path = [];
     strokePoints = [];
+    gesturePoints = [];
+    gestureZoomFactor = 1;
     anchorPoint = null;
     totalDistance = 0;
     pipeState = null;
     gesturePipeScale = 1;
     gesturePipeScaleLocked = false;
     gestureFirstSegmentMaxProjection = 0;
+    gestureCurveBoostActive = false;
     gestureStartClientPoint = null;
     clearGesturePipeOverlay();
     removeGestureHint();
@@ -857,13 +1161,18 @@
     const observedPath = [...path];
     const observedDistance = totalDistance;
     const surviving = common.survivingPipeActions(pipeState);
-    const action = common.resolvePipeAction(pipeState);
+    const action = common.resolvePipeAction(
+      pipeState,
+      undefined,
+      observedPath,
+      settings,
+    );
 
     resetGestureState();
     finishTrail();
 
     appendDebugLog(
-      `Gesture end: allowAction=${allowAction}, path=${observedPath.join(" -> ") || "(none)"}, distance=${observedDistance.toFixed(1)}, surviving=${formatActionList(surviving)}, resolved=${action || "none"}`
+      `Gesture end: allowAction=${allowAction}, path=${observedPath.join(" -> ") || "(none)"}, distance=${observedDistance.toFixed(1)}, surviving=${formatActionList(surviving)}, resolved=${action || "none"}`,
     );
     if (!allowAction) {
       appendDebugLog("Gesture ignored: release button does not match trigger.");
@@ -878,12 +1187,18 @@
     if (action) {
       appendDebugLog(`Pipe match: ${action}`);
       sendGestureAction(action);
-      if (settings.triggerMouseButton === "right") suppressNextContextMenu = true;
+      if (settings.triggerMouseButton === "right")
+        suppressNextContextMenu = true;
     } else if (observedDistance >= settings.minSegmentPx * 1.5) {
-      appendDebugLog("No pipe completed (insufficient progress), suppressing context menu due to substantial movement.");
-      if (settings.triggerMouseButton === "right") suppressNextContextMenu = true;
+      appendDebugLog(
+        "No pipe completed (insufficient progress), suppressing context menu due to substantial movement.",
+      );
+      if (settings.triggerMouseButton === "right")
+        suppressNextContextMenu = true;
     } else {
-      appendDebugLog("No pipe completed and movement too small to suppress context menu.");
+      appendDebugLog(
+        "No pipe completed and movement too small to suppress context menu.",
+      );
     }
   }
 
@@ -908,7 +1223,10 @@
   }
 
   function performLocalPageAction(action) {
-    const step = Math.max(120, Math.round(window.innerWidth * LOCAL_SCROLL_STEP_RATIO));
+    const step = Math.max(
+      120,
+      Math.round(window.innerWidth * LOCAL_SCROLL_STEP_RATIO),
+    );
     switch (action) {
       case "scrollLeft":
         window.scrollBy({ left: -step, top: 0, behavior: "smooth" });
@@ -931,7 +1249,7 @@
         event.preventDefault();
         event.stopPropagation();
         appendDebugLog(
-          `Middle rocker action fired: ${event.button === 0 ? "left" : "right"} -> ${action}`
+          `Middle rocker action fired: ${event.button === 0 ? "left" : "right"} -> ${action}`,
         );
         sendGestureAction(action);
         return;
@@ -940,18 +1258,23 @@
 
     if (!isMatchingMouseButton(event.button)) return;
     if (!isModifierSatisfied(event)) {
-      appendDebugLog(`Mouse down ignored: modifier '${settings.triggerModifier}' not held.`);
+      appendDebugLog(
+        `Mouse down ignored: modifier '${settings.triggerModifier}' not held.`,
+      );
       return;
     }
 
     if (settings.triggerMouseButton === "right") {
       const now = Date.now();
-      const isSecondStationaryClick = now - lastRightStationaryClickAt <= RIGHT_MENU_DOUBLECLICK_MS;
+      const isSecondStationaryClick =
+        now - lastRightStationaryClickAt <= RIGHT_MENU_DOUBLECLICK_MS;
       if (isSecondStationaryClick) {
         // Second stationary right click: let native context menu flow.
         lastRightStationaryClickAt = 0;
         blockGestureUntilRelease = true;
-        appendDebugLog("Right-click bypass: second stationary click opens native context menu.");
+        appendDebugLog(
+          "Right-click bypass: second stationary click opens native context menu.",
+        );
         return;
       }
     }
@@ -973,21 +1296,23 @@
       return;
     }
     strokePoints.push({ x: event.clientX, y: event.clientY });
+    const gesturePoint = toGesturePoint(event.clientX, event.clientY);
+    gesturePoints.push(gesturePoint);
 
     const state = { anchorX: anchorPoint.x, anchorY: anchorPoint.y };
     const { stepDist, pushed } = common.processGestureMove(
       state,
-      event.clientX,
-      event.clientY,
+      gesturePoint.x,
+      gesturePoint.y,
       settings.minSegmentPx,
-      path
+      path,
     );
     totalDistance += stepDist;
     anchorPoint = { x: state.anchorX, y: state.anchorY };
 
     if (pushed) {
       appendDebugLog(
-        `Direction added: path=${path.join(" -> ")}, step=${stepDist.toFixed(1)}`
+        `Direction added: path=${path.join(" -> ")}, step=${stepDist.toFixed(1)}`,
       );
     }
     const scaleChanged = updateGesturePipeScaleFromStroke();
@@ -997,9 +1322,10 @@
 
     pipeState = common.advancePipeMatchState(
       pipeState,
-      { x: event.clientX, y: event.clientY },
+      { x: gesturePoint.x, y: gesturePoint.y },
       gesturePipeScale,
-      settings
+      settings,
+      path,
     );
 
     if (pipeState && pipeState.allEliminated && path.length > 0) {
@@ -1023,11 +1349,17 @@
     }
     if (!tracking) return;
 
-    if (settings.triggerMouseButton === "right" && isMatchingMouseButton(event.button)) {
-      const isStationaryClick = path.length === 0 && totalDistance <= STATIONARY_CLICK_PX;
+    if (
+      settings.triggerMouseButton === "right" &&
+      isMatchingMouseButton(event.button)
+    ) {
+      const isStationaryClick =
+        path.length === 0 && totalDistance <= STATIONARY_CLICK_PX;
       lastRightStationaryClickAt = isStationaryClick ? Date.now() : 0;
       if (isStationaryClick) {
-        appendDebugLog("Stationary right click detected (possible context-menu double-click sequence).");
+        appendDebugLog(
+          "Stationary right click detected (possible context-menu double-click sequence).",
+        );
       }
     }
 
@@ -1085,16 +1417,19 @@
     event.preventDefault();
     event.stopPropagation();
     appendDebugLog(
-      `Middle rocker wheel action fired: ${event.deltaX < 0 ? "left" : "right"} -> ${action} (deltaX=${event.deltaX.toFixed(2)}, deltaY=${event.deltaY.toFixed(2)})`
+      `Middle rocker wheel action fired: ${event.deltaX < 0 ? "left" : "right"} -> ${action} (deltaX=${event.deltaX.toFixed(2)}, deltaY=${event.deltaY.toFixed(2)})`,
     );
     sendGestureAction(action);
   }
 
   api.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local" || !changes.settings) return;
-    settings = common.sanitizeSettings(changes.settings.newValue || common.DEFAULT_SETTINGS);
+    settings = common.sanitizeSettings(
+      changes.settings.newValue || common.DEFAULT_SETTINGS,
+    );
     applyTrailStyle();
     syncDebugPanelVisibility();
+    refreshOverlaysForZoom();
     requestTabZoomFromBackground();
     appendDebugLog("Settings updated from storage change.");
   });
@@ -1107,11 +1442,15 @@
     }
   });
 
-  window.addEventListener("DOMContentLoaded", syncDebugPanelVisibility, { once: true });
+  window.addEventListener("DOMContentLoaded", syncDebugPanelVisibility, {
+    once: true,
+  });
   if (document.documentElement) {
     createTrailCanvas();
   } else {
-    window.addEventListener("DOMContentLoaded", createTrailCanvas, { once: true });
+    window.addEventListener("DOMContentLoaded", createTrailCanvas, {
+      once: true,
+    });
   }
   window.addEventListener("resize", resizeTrailCanvas);
   if (window.visualViewport) {
@@ -1132,7 +1471,10 @@
     window.addEventListener("contextmenu", onContextMenu, true);
     window.addEventListener("click", onClick, true);
     window.addEventListener("auxclick", onAuxClick, true);
-    window.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    window.addEventListener("wheel", onWheel, {
+      capture: true,
+      passive: false,
+    });
   }
 
   void attachGestureListenersAfterSettings();

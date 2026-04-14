@@ -13,7 +13,7 @@
     "toggleMaximizeWindow",
     "maximizeWindow",
     "minimizeWindow",
-    "toggleFullscreen"
+    "toggleFullscreen",
   ];
   const ROCKER_ASSIGNABLE_ACTIONS = ["none", ...ACTIONS];
   const VALID_MOUSE_BUTTONS = ["right", "middle"];
@@ -32,7 +32,7 @@
     toggleMaximizeWindow: "Toggle maximize window",
     maximizeWindow: "Maximize window",
     minimizeWindow: "Minimize window",
-    toggleFullscreen: "Toggle fullscreen"
+    toggleFullscreen: "Toggle fullscreen",
   };
 
   const DEFAULT_SETTINGS = {
@@ -49,9 +49,9 @@
       toggleMaximizeWindow: [],
       maximizeWindow: [],
       minimizeWindow: [],
-      toggleFullscreen: []
+      toggleFullscreen: [],
     },
-    minSegmentPx: 18,
+    minSegmentPx: 35,
     pipeWidth: 100,
     inaccuracyDegrees: 50,
     trailColor: "#24a1ff",
@@ -60,7 +60,8 @@
     triggerModifier: "unset",
     rockerMiddleLeftAction: "back",
     rockerMiddleRightAction: "forward",
-    showDebugLogWindow: false
+    showDebugLogWindow: false,
+    trainingMode: false,
   };
 
   const PATH_TEMPLATE_SAMPLES = 36;
@@ -76,7 +77,10 @@
     if (!points || points.length < 2) return 0;
     let t = 0;
     for (let i = 1; i < points.length; i += 1) {
-      t += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+      t += Math.hypot(
+        points[i].x - points[i - 1].x,
+        points[i].y - points[i - 1].y,
+      );
     }
     return t;
   }
@@ -90,7 +94,10 @@
     const dists = [];
     let total = 0;
     for (let i = 1; i < points.length; i += 1) {
-      const d = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+      const d = Math.hypot(
+        points[i].x - points[i - 1].x,
+        points[i].y - points[i - 1].y,
+      );
       dists.push(d);
       total += d;
     }
@@ -107,12 +114,13 @@
         acc += dists[j];
         j += 1;
       }
-      const segFrac = j < dists.length && dists[j] > 1e-6 ? (target - acc) / dists[j] : 0;
+      const segFrac =
+        j < dists.length && dists[j] > 1e-6 ? (target - acc) / dists[j] : 0;
       const p0 = points[j];
       const p1 = points[j + 1] || p0;
       result.push({
         x: p0.x + (p1.x - p0.x) * segFrac,
-        y: p0.y + (p1.y - p0.y) * segFrac
+        y: p0.y + (p1.y - p0.y) * segFrac,
       });
     }
     return result;
@@ -159,7 +167,7 @@
     const cy = 0;
     const pts = template.map((p) => ({
       x: p[0] * scale + cx,
-      y: p[1] * scale + cy
+      y: p[1] * scale + cy,
     }));
     let minX = Infinity;
     let minY = Infinity;
@@ -185,7 +193,7 @@
     return {
       d,
       viewBox: `0 0 ${vbW.toFixed(2)} ${vbH.toFixed(2)}`,
-      empty: false
+      empty: false,
     };
   }
 
@@ -238,7 +246,8 @@
     }
     const lastPt = npts[last];
     const dLast = deduped[deduped.length - 1];
-    if (Math.hypot(lastPt.x - dLast.x, lastPt.y - dLast.y) > 1e-4) deduped.push(lastPt);
+    if (Math.hypot(lastPt.x - dLast.x, lastPt.y - dLast.y) > 1e-4)
+      deduped.push(lastPt);
     return deduped.length >= 2 ? deduped : npts;
   }
 
@@ -248,7 +257,10 @@
     const cap = Math.max(1, maxArrows != null ? maxArrows : 8);
     const cum = [0];
     for (let i = 0; i < n - 1; i += 1) {
-      cum.push(cum[i] + Math.hypot(npts[i + 1].x - npts[i].x, npts[i + 1].y - npts[i].y));
+      cum.push(
+        cum[i] +
+          Math.hypot(npts[i + 1].x - npts[i].x, npts[i + 1].y - npts[i].y),
+      );
     }
     const total = cum[cum.length - 1];
     if (total < 1e-9) return [];
@@ -261,7 +273,7 @@
             x1: npts[i].x,
             y1: npts[i].y,
             x2: npts[i + 1].x,
-            y2: npts[i + 1].y
+            y2: npts[i + 1].y,
           });
           break;
         }
@@ -280,7 +292,7 @@
         viewBox: "0 0 24 24",
         start: null,
         strokeD: "M 4 20 L 20 4",
-        arrowSegments: []
+        arrowSegments: [],
       };
     }
     let minX = Infinity;
@@ -293,23 +305,31 @@
       maxX = Math.max(maxX, p.x);
       maxY = Math.max(maxY, p.y);
     }
-    const norm = (p) => ({ x: p.x - minX + padV + sp, y: p.y - minY + padV + sp });
+    const norm = (p) => ({
+      x: p.x - minX + padV + sp,
+      y: p.y - minY + padV + sp,
+    });
     const npts = pts.map(norm);
     const w = Math.max(maxX - minX, 1);
     const h = Math.max(maxY - minY, 1);
     const vbW = w + (padV + sp) * 2;
     const vbH = h + (padV + sp) * 2;
     const strokeD = npts
-      .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
+      .map(
+        (p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`,
+      )
       .join(" ");
-    const coarse = decimatePolylineUniform(npts, Math.min(40, Math.max(12, Math.ceil(npts.length / 2))));
+    const coarse = decimatePolylineUniform(
+      npts,
+      Math.min(40, Math.max(12, Math.ceil(npts.length / 2))),
+    );
     const arrowSegments = arrowSegmentsAlongPolyline(coarse, maxArrows);
     return {
       empty: false,
       viewBox: `0 0 ${vbW.toFixed(2)} ${vbH.toFixed(2)}`,
       start: { cx: npts[0].x, cy: npts[0].y },
       strokeD,
-      arrowSegments
+      arrowSegments,
     };
   }
 
@@ -369,7 +389,9 @@
     const source = Array.isArray(input) ? input : fallbackArray;
     const out = [];
     for (const part of source) {
-      const token = String(part || "").trim().toUpperCase();
+      const token = String(part || "")
+        .trim()
+        .toUpperCase();
       if (VALID_DIRECTIONS.includes(token)) out.push(token);
     }
     return out.length ? out : [...fallbackArray];
@@ -395,7 +417,10 @@
 
     if (shortHex.test(value)) {
       const chars = value.slice(1).split("");
-      return `#${chars.map((c) => c + c).join("").toLowerCase()}`;
+      return `#${chars
+        .map((c) => c + c)
+        .join("")
+        .toLowerCase()}`;
     }
     if (fullHex.test(value)) {
       return value.toLowerCase();
@@ -426,7 +451,7 @@
     L: 180,
     UL: 225,
     U: 270,
-    UR: 315
+    UR: 315,
   };
 
   function angleForDirection(direction) {
@@ -481,7 +506,12 @@
   }
 
   function isCardinal(direction) {
-    return direction === "R" || direction === "D" || direction === "L" || direction === "U";
+    return (
+      direction === "R" ||
+      direction === "D" ||
+      direction === "L" ||
+      direction === "U"
+    );
   }
 
   function collapseBridgeDiagonal(pathDirections) {
@@ -528,7 +558,8 @@
   }
 
   function actionHasValidTemplate(action, settings) {
-    const t = settings.gesturePathTemplates && settings.gesturePathTemplates[action];
+    const t =
+      settings.gesturePathTemplates && settings.gesturePathTemplates[action];
     return !!(t && Array.isArray(t) && t.length === PATH_TEMPLATE_SAMPLES);
   }
 
@@ -537,9 +568,38 @@
     return Array.isArray(g) && g.length > 0;
   }
 
+  function gestureTokensPrefixMatch(action, settings, observedPath) {
+    if (!settings || !observedPath || observedPath.length === 0) return true;
+    const toks = settings.gestures[action];
+    if (!Array.isArray(toks) || toks.length === 0) return true;
+    if (observedPath.length > toks.length) return false;
+    const tolerance =
+      settings && Number.isFinite(settings.inaccuracyDegrees)
+        ? settings.inaccuracyDegrees
+        : DEFAULT_SETTINGS.inaccuracyDegrees;
+    for (let i = 0; i < observedPath.length; i += 1) {
+      const observed = observedPath[i];
+      const expected = toks[i];
+      if (observed === expected) continue;
+      const observedAngle = angleForDirection(observed);
+      const expectedAngle = angleForDirection(expected);
+      if (
+        !Number.isFinite(observedAngle) ||
+        !Number.isFinite(expectedAngle) ||
+        angularDifference(observedAngle, expectedAngle) > tolerance
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /** True if this action has a token sequence and/or a taught path template. */
   function actionIsConfigured(action, settings) {
-    return actionHasTokens(action, settings) || actionHasValidTemplate(action, settings);
+    return (
+      actionHasTokens(action, settings) ||
+      actionHasValidTemplate(action, settings)
+    );
   }
 
   function gestureTokensToSvgViewSpec(tokens) {
@@ -550,7 +610,7 @@
       return {
         d: "M 4 20 L 20 4",
         viewBox: "0 0 24 24",
-        empty: true
+        empty: true,
       };
     }
     let x = 0;
@@ -587,51 +647,84 @@
     return {
       d,
       viewBox: `0 0 ${vbW.toFixed(2)} ${vbH.toFixed(2)}`,
-      empty: false
+      empty: false,
     };
   }
 
   function sanitizeSettings(raw) {
     const base = raw && typeof raw === "object" ? raw : {};
-    const rawGestures = base.gestures && typeof base.gestures === "object" ? base.gestures : {};
+    const rawGestures =
+      base.gestures && typeof base.gestures === "object" ? base.gestures : {};
 
     const gestures = {};
     for (const action of ACTIONS) {
-      gestures[action] = normalizeGestureArray(rawGestures[action], DEFAULT_SETTINGS.gestures[action]);
+      gestures[action] = normalizeGestureArray(
+        rawGestures[action],
+        DEFAULT_SETTINGS.gestures[action],
+      );
     }
 
     return {
       gestures,
-      gesturePathTemplates: sanitizeGesturePathTemplates(base.gesturePathTemplates),
-      minSegmentPx: clampNumber(base.minSegmentPx, 8, 80, DEFAULT_SETTINGS.minSegmentPx),
-      pipeWidth: clampNumber(base.pipeWidth, 20, 200, DEFAULT_SETTINGS.pipeWidth),
-      inaccuracyDegrees: clampNumber(base.inaccuracyDegrees, 10, 85, DEFAULT_SETTINGS.inaccuracyDegrees),
-      trailColor: normalizeHexColor(base.trailColor, DEFAULT_SETTINGS.trailColor),
-      trailWidth: clampNumber(base.trailWidth, 1, 16, DEFAULT_SETTINGS.trailWidth),
+      gesturePathTemplates: sanitizeGesturePathTemplates(
+        base.gesturePathTemplates,
+      ),
+      minSegmentPx: clampNumber(
+        base.minSegmentPx,
+        8,
+        80,
+        DEFAULT_SETTINGS.minSegmentPx,
+      ),
+      pipeWidth: clampNumber(
+        base.pipeWidth,
+        20,
+        200,
+        DEFAULT_SETTINGS.pipeWidth,
+      ),
+      inaccuracyDegrees: clampNumber(
+        base.inaccuracyDegrees,
+        10,
+        85,
+        DEFAULT_SETTINGS.inaccuracyDegrees,
+      ),
+      trailColor: normalizeHexColor(
+        base.trailColor,
+        DEFAULT_SETTINGS.trailColor,
+      ),
+      trailWidth: clampNumber(
+        base.trailWidth,
+        1,
+        16,
+        DEFAULT_SETTINGS.trailWidth,
+      ),
       triggerMouseButton: normalizeChoice(
         base.triggerMouseButton,
         VALID_MOUSE_BUTTONS,
-        DEFAULT_SETTINGS.triggerMouseButton
+        DEFAULT_SETTINGS.triggerMouseButton,
       ),
       triggerModifier: normalizeChoice(
         base.triggerModifier,
         VALID_MODIFIERS,
-        DEFAULT_SETTINGS.triggerModifier
+        DEFAULT_SETTINGS.triggerModifier,
       ),
       rockerMiddleLeftAction: normalizeChoice(
         base.rockerMiddleLeftAction,
         ROCKER_ASSIGNABLE_ACTIONS,
-        DEFAULT_SETTINGS.rockerMiddleLeftAction
+        DEFAULT_SETTINGS.rockerMiddleLeftAction,
       ),
       rockerMiddleRightAction: normalizeChoice(
         base.rockerMiddleRightAction,
         ROCKER_ASSIGNABLE_ACTIONS,
-        DEFAULT_SETTINGS.rockerMiddleRightAction
+        DEFAULT_SETTINGS.rockerMiddleRightAction,
       ),
       showDebugLogWindow: normalizeBoolean(
         base.showDebugLogWindow,
-        DEFAULT_SETTINGS.showDebugLogWindow
-      )
+        DEFAULT_SETTINGS.showDebugLogWindow,
+      ),
+      trainingMode: normalizeBoolean(
+        base.trainingMode,
+        DEFAULT_SETTINGS.trainingMode,
+      ),
     };
   }
 
@@ -645,24 +738,33 @@
 
   function buildPipeCenterline(action, settings, startPoint, scaleFactor) {
     const s = Math.max(1, scaleFactor || 1);
-    const template = settings.gesturePathTemplates && settings.gesturePathTemplates[action];
+    const template =
+      settings.gesturePathTemplates && settings.gesturePathTemplates[action];
     const tokens = settings.gestures[action] || [];
-    if (template && Array.isArray(template) && template.length === PATH_TEMPLATE_SAMPLES) {
+    if (
+      template &&
+      Array.isArray(template) &&
+      template.length === PATH_TEMPLATE_SAMPLES
+    ) {
       const t0 = template[0];
       if (Array.isArray(t0) && t0.length === 2) {
         let maxExtent = 0;
         for (const p of template) {
           if (!Array.isArray(p) || p.length !== 2) continue;
-          maxExtent = Math.max(maxExtent, Math.abs(p[0] - t0[0]), Math.abs(p[1] - t0[1]));
+          maxExtent = Math.max(
+            maxExtent,
+            Math.abs(p[0] - t0[0]),
+            Math.abs(p[1] - t0[1]),
+          );
         }
         maxExtent = Math.max(maxExtent, 0.3);
-        const scale = pipeScaleBase(settings) * s / maxExtent;
+        const scale = (pipeScaleBase(settings) * s) / maxExtent;
         const pts = [];
         for (const p of template) {
           if (!Array.isArray(p) || p.length !== 2) continue;
           pts.push({
             x: startPoint.x + (p[0] - t0[0]) * scale,
-            y: startPoint.y + (p[1] - t0[1]) * scale
+            y: startPoint.y + (p[1] - t0[1]) * scale,
           });
         }
         if (pts.length >= 2) return pts;
@@ -691,20 +793,20 @@
     return settings.minSegmentPx * (settings.pipeWidth / 100) * Math.sqrt(s);
   }
 
-  /**
-   * Find the closest point on `polyline` to `point`, optionally ignoring
-   * the polyline before `minArcLength` (used for forward-progress enforcement).
-   * For overlapping segments (e.g. D→U hairpin), the earlier segment wins at
-   * equal distance; the later segment takes over once the minArcLength constraint
-   * pushes the earlier segment's clamped projection further from the mouse.
-   */
-  function pointToPolylineInfo(point, polyline, minArcLength) {
-    if (!polyline || polyline.length < 2 || !point) {
-      return { distance: Infinity, progress: 0, arcLength: 0 };
-    }
-    const minArc = minArcLength > 0 ? minArcLength : 0;
-    let bestDist2 = Infinity;
-    let bestArc = 0;
+  function visibleTrailHalfWidth(scaleFactor, settings) {
+    const s = Math.max(1, scaleFactor || 1);
+    return (settings.trailWidth * s) / 2;
+  }
+
+  function computePipeContainmentRadius(scaleFactor, settings) {
+    const pipeRadius = computePipeRadius(scaleFactor, settings);
+    const trailHalf = visibleTrailHalfWidth(scaleFactor, settings);
+    return Math.max(1, pipeRadius - trailHalf);
+  }
+
+  function pointAtArcLength(polyline, arcLength) {
+    if (!polyline || polyline.length < 2) return null;
+    const target = Math.max(0, arcLength || 0);
     let totalArc = 0;
     for (let i = 0; i < polyline.length - 1; i += 1) {
       const a = polyline[i];
@@ -714,7 +816,58 @@
       const segLen = Math.hypot(vx, vy);
       if (segLen < 1e-6) continue;
       const segEnd = totalArc + segLen;
+      if (target <= segEnd) {
+        const t = segLen > 1e-6 ? (target - totalArc) / segLen : 0;
+        return {
+          x: a.x + vx * t,
+          y: a.y + vy * t,
+        };
+      }
+      totalArc = segEnd;
+    }
+    const last = polyline[polyline.length - 1];
+    return last ? { x: last.x, y: last.y } : null;
+  }
+
+  /**
+   * Find the closest point on `polyline` to `point`, restricted to an arc-length
+   * window. This keeps candidate matching in lock-step with the same centerline
+   * used to draw the training pipe, so the pointer cannot jump ahead to a later
+   * segment or skip intermediate parts of the gesture.
+   */
+  function pointToPolylineInfo(point, polyline, minArcLength, maxArcLength) {
+    if (!polyline || polyline.length < 2 || !point) {
+      return {
+        distance: Infinity,
+        progress: 0,
+        arcLength: 0,
+        tangentX: 0,
+        tangentY: 0,
+      };
+    }
+    const minArc = minArcLength > 0 ? minArcLength : 0;
+    const maxArc = Number.isFinite(maxArcLength)
+      ? Math.max(minArc, maxArcLength)
+      : Number.POSITIVE_INFINITY;
+    let bestDist2 = Infinity;
+    let bestArc = minArc;
+    let bestTangentX = 0;
+    let bestTangentY = 0;
+    let totalArc = 0;
+    for (let i = 0; i < polyline.length - 1; i += 1) {
+      const a = polyline[i];
+      const b = polyline[i + 1];
+      const vx = b.x - a.x;
+      const vy = b.y - a.y;
+      const segLen = Math.hypot(vx, vy);
+      if (segLen < 1e-6) continue;
+      const segStart = totalArc;
+      const segEnd = totalArc + segLen;
       if (segEnd < minArc) {
+        totalArc = segEnd;
+        continue;
+      }
+      if (segStart > maxArc) {
         totalArc = segEnd;
         continue;
       }
@@ -723,8 +876,20 @@
       let t = (wx * vx + wy * vy) / (segLen * segLen);
       if (t < 0) t = 0;
       if (t > 1) t = 1;
-      if (totalArc + segLen * t < minArc) {
-        t = Math.min(1, (minArc - totalArc) / segLen);
+      let arcAtT = segStart + segLen * t;
+      const clampedMinArc = Math.max(minArc, segStart);
+      const clampedMaxArc = Math.min(maxArc, segEnd);
+      if (arcAtT < clampedMinArc) {
+        t = Math.min(1, (clampedMinArc - segStart) / segLen);
+        arcAtT = segStart + segLen * t;
+      }
+      if (arcAtT > clampedMaxArc) {
+        t = Math.max(0, (clampedMaxArc - segStart) / segLen);
+        arcAtT = segStart + segLen * t;
+      }
+      if (arcAtT < clampedMinArc - 1e-6 || arcAtT > clampedMaxArc + 1e-6) {
+        totalArc = segEnd;
+        continue;
       }
       const px = a.x + vx * t;
       const py = a.y + vy * t;
@@ -733,7 +898,9 @@
       const d2 = dx * dx + dy * dy;
       if (d2 < bestDist2) {
         bestDist2 = d2;
-        bestArc = totalArc + segLen * t;
+        bestArc = arcAtT;
+        bestTangentX = vx / segLen;
+        bestTangentY = vy / segLen;
       }
       totalArc = segEnd;
     }
@@ -741,7 +908,9 @@
     return {
       distance: Math.sqrt(bestDist2),
       progress: Math.max(0, Math.min(1, progress)),
-      arcLength: bestArc
+      arcLength: bestArc,
+      tangentX: bestTangentX,
+      tangentY: bestTangentY,
     };
   }
 
@@ -753,17 +922,34 @@
     const pipes = [];
     for (const action of ACTIONS) {
       if (!actionIsConfigured(action, settings)) continue;
-      const centerline = buildPipeCenterline(action, settings, startPoint, scaleFactor);
+      const centerline = buildPipeCenterline(
+        action,
+        settings,
+        startPoint,
+        scaleFactor,
+      );
       if (!centerline) continue;
-      pipes.push({ action, centerline, progress: 0, arcLength: 0, eliminated: false });
+      pipes.push({
+        action,
+        centerline,
+        progress: 0,
+        arcLength: 0,
+        lastPoint: { x: startPoint.x, y: startPoint.y },
+        eliminated: false,
+      });
     }
     const radius = computePipeRadius(scaleFactor, settings);
+    const containmentRadius = computePipeContainmentRadius(
+      scaleFactor,
+      settings,
+    );
     return {
       pipes,
       radius,
+      containmentRadius,
       startPoint: { x: startPoint.x, y: startPoint.y },
       scaleFactor,
-      allEliminated: pipes.length === 0
+      allEliminated: pipes.length === 0,
     };
   }
 
@@ -771,51 +957,132 @@
    * Per-move update: rebuild geometry if scale changed, then test containment.
    * Once a pipe is eliminated it stays eliminated.
    */
-  function advancePipeMatchState(prevState, mousePoint, scaleFactor, settings) {
+  function advancePipeMatchState(
+    prevState,
+    mousePoint,
+    scaleFactor,
+    settings,
+    observedPath,
+  ) {
     if (!prevState || prevState.allEliminated) return prevState;
     let pipes = prevState.pipes;
     let radius = prevState.radius;
+    let containmentRadius = prevState.containmentRadius;
     const scaleChanged = Math.abs(scaleFactor - prevState.scaleFactor) >= 0.01;
     if (scaleChanged) {
       radius = computePipeRadius(scaleFactor, settings);
+      containmentRadius = computePipeContainmentRadius(scaleFactor, settings);
       pipes = pipes.map((pipe) => {
         if (pipe.eliminated) return pipe;
-        const centerline = buildPipeCenterline(pipe.action, settings, prevState.startPoint, scaleFactor);
-        return centerline ? { ...pipe, centerline } : { ...pipe, eliminated: true };
+        const centerline = buildPipeCenterline(
+          pipe.action,
+          settings,
+          prevState.startPoint,
+          scaleFactor,
+        );
+        if (!centerline) return { ...pipe, eliminated: true };
+        const lastPoint =
+          pointAtArcLength(centerline, pipe.arcLength || 0) ||
+          prevState.startPoint;
+        return { ...pipe, centerline, lastPoint };
       });
     }
-    const regressionWindow = radius * 2;
     const updated = pipes.map((pipe) => {
       if (pipe.eliminated) return pipe;
-      const minArc = Math.max(0, (pipe.arcLength || 0) - regressionWindow);
-      const info = pointToPolylineInfo(mousePoint, pipe.centerline, minArc);
-      if (info.distance > radius) {
+      if (!gestureTokensPrefixMatch(pipe.action, settings, observedPath)) {
         return { ...pipe, eliminated: true };
       }
+      const currentArc = Math.max(0, pipe.arcLength || 0);
+      const prevPoint =
+        pipe.lastPoint ||
+        pointAtArcLength(pipe.centerline, currentArc) ||
+        prevState.startPoint;
+      const moveX = mousePoint.x - prevPoint.x;
+      const moveY = mousePoint.y - prevPoint.y;
+      const moveLen = Math.hypot(moveX, moveY);
+      const backtrackWindow = Math.max(
+        containmentRadius * 0.75,
+        settings.minSegmentPx * 0.5,
+      );
+      const leadWindow = Math.max(
+        containmentRadius * 3.25,
+        settings.minSegmentPx * 2.2,
+        moveLen * 2.4,
+      );
+      const minArc = Math.max(0, currentArc - backtrackWindow);
+      const maxArc = currentArc + leadWindow;
+      const info = pointToPolylineInfo(
+        mousePoint,
+        pipe.centerline,
+        minArc,
+        maxArc,
+      );
+      if (
+        !Number.isFinite(info.distance) ||
+        info.distance > containmentRadius
+      ) {
+        return { ...pipe, eliminated: true };
+      }
+
+      const nextArc = Math.max(currentArc, info.arcLength);
+      const nextPoint = pointAtArcLength(pipe.centerline, nextArc) || prevPoint;
       return {
         ...pipe,
         progress: Math.max(pipe.progress, info.progress),
-        arcLength: Math.max(pipe.arcLength || 0, info.arcLength)
+        arcLength: nextArc,
+        lastPoint: nextPoint,
       };
     });
     const surviving = updated.filter((p) => !p.eliminated);
     return {
       pipes: updated,
       radius,
+      containmentRadius,
       startPoint: prevState.startPoint,
       scaleFactor,
-      allEliminated: surviving.length === 0
+      allEliminated: surviving.length === 0,
     };
   }
 
-  /** At release, pick the surviving pipe with the best progress. */
-  function resolvePipeAction(state, minProgressFraction) {
+  function gestureTokensExactPathMatch(action, settings, observedPath) {
+    if (!observedPath || observedPath.length === 0 || !settings) return false;
+    const toks = settings.gestures[action];
+    if (!Array.isArray(toks) || toks.length === 0) return false;
+    if (toks.length !== observedPath.length) return false;
+    for (let i = 0; i < toks.length; i += 1) {
+      if (toks[i] !== observedPath[i]) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Pick the best surviving pipe. Prefer configured token paths that exactly
+   * match the observed direction sequence over template-only gestures, so a
+   * drawn D→R does not lose to a loose circular template match.
+   */
+  function resolvePipeAction(
+    state,
+    minProgressFraction,
+    observedPath,
+    settings,
+  ) {
     if (!state || state.allEliminated) return null;
     const minProg = minProgressFraction != null ? minProgressFraction : 0.3;
     const surviving = state.pipes.filter((p) => !p.eliminated);
     if (!surviving.length) return null;
+    const canTok = !!(settings && observedPath && observedPath.length);
     surviving.sort((a, b) => {
-      if (Math.abs(a.progress - b.progress) > 0.01) return b.progress - a.progress;
+      if (canTok) {
+        const ea = gestureTokensExactPathMatch(a.action, settings, observedPath)
+          ? 1
+          : 0;
+        const eb = gestureTokensExactPathMatch(b.action, settings, observedPath)
+          ? 1
+          : 0;
+        if (ea !== eb) return eb - ea;
+      }
+      if (Math.abs(a.progress - b.progress) > 0.01)
+        return b.progress - a.progress;
       return ACTIONS.indexOf(a.action) - ACTIONS.indexOf(b.action);
     });
     const best = surviving[0];
@@ -861,10 +1128,13 @@
     pipeScaleBase,
     buildPipeCenterline,
     computePipeRadius,
+    computePipeContainmentRadius,
+    pointAtArcLength,
     pointToPolylineInfo,
     createPipeMatchState,
     advancePipeMatchState,
     resolvePipeAction,
-    survivingPipeActions
+    survivingPipeActions,
+    gestureTokensPrefixMatch,
   };
 })();
