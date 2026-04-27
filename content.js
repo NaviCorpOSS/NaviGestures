@@ -31,6 +31,7 @@
   let gestureFirstSegmentMaxProjection = 0;
   /** True after curve-based scale boost was applied; cleared when token path shows a sharp corner. */
   let gestureCurveBoostActive = false;
+let gestureCurveScaleLen = 0;
   let gestureStartClientPoint = null;
   let clearTrailTimer = null;
   let trailLastPoint = null;
@@ -424,7 +425,6 @@
     if (Math.hypot(L.x - lastOut.x, L.y - lastOut.y) > 1e-3) {
       out.push({ x: L.x, y: L.y });
     }
-    console.log("resampleStrokeByArcLength, out.length:", out.length);
     return out;
   }
 
@@ -434,9 +434,6 @@
     let absSumDeg = 0;
     let signedSumDeg = 0;
     if (!sampled || sampled.length < 3) {
-      console.log(
-        "strokeTurnMetricsAtSamples, sampled.length < 3 - returning 0",
-      );
       return { maxAbsDeg: 0, absSumDeg: 0, signedSumDeg: 0 };
     }
     for (let i = 1; i < sampled.length - 1; i += 1) {
@@ -455,40 +452,81 @@
       absSumDeg += ad;
       maxAbsDeg = Math.max(maxAbsDeg, ad);
     }
-    console.log(
-      "strokeTurnMetricsAtSamples, maxAbsDeg:",
-      maxAbsDeg,
-      "absSumDeg:",
-      absSumDeg,
-      "signedSumDeg:",
-      signedSumDeg,
-    );
     return { maxAbsDeg, absSumDeg, signedSumDeg };
   }
 
+  function strokeBounds(points) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of points) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+    return {
+      width: Math.max(0, maxX - minX),
+      height: Math.max(0, maxY - minY),
+    };
+  }
+
+  function decimatePointsUniform(points, maxPoints) {
+    if (!points || points.length <= maxPoints) return points || [];
+    const out = [];
+    const last = points.length - 1;
+    for (let i = 0; i < maxPoints; i += 1) {
+      out.push(points[Math.round((i / (maxPoints - 1)) * last)]);
+    }
+    return out;
+  }
+
   /**
-   * True when the physical stroke bends smoothly in one direction (coherent
-   * signed curvature), with no single sharp corner — so circles grow with
-   * radius, while straight lines, zig-zag jitter, and L-corners stay on
-   * first-axis projection sizing.
+   * Estimate gesture size from physical geometry. Curved strokes use signed
+   * turn to infer radius, which is much more stable for noisy circles/arcs than
+   * projection onto the first quantized direction.
    */
-  function strokeShowsGentleDistributedCurvature(strokePoints, settings) {
-    if (!strokePoints || strokePoints.length < 3) return false;
-    const totalLen = common.polylineLength(strokePoints);
+  function strokeScaleHints(strokePoints, settings) {
+    const empty = {
+      curveLike: false,
+      maxDistFromStart: 0,
+      curveScaleLen: 0,
+    };
+    if (!strokePoints || strokePoints.length < 3) return empty;
+    const hintPoints = decimatePointsUniform(strokePoints, 96);
+    const totalLen = common.polylineLength(hintPoints);
     const stepPx = Math.max(7, settings.minSegmentPx * 0.42);
-    if (totalLen < stepPx * 1.05) return false;
-    const sampled = resampleStrokeByArcLength(strokePoints, stepPx);
-    if (sampled.length < 4) return false;
+    if (totalLen < stepPx * 2.2) return empty;
+    const sampled = resampleStrokeByArcLength(hintPoints, stepPx);
+    if (sampled.length < 4) return empty;
     const m = strokeTurnMetricsAtSamples(sampled);
-    if (m.absSumDeg < 1e-6) return false;
+    const start = hintPoints[0];
+    let maxDistFromStart = 0;
+    for (const p of hintPoints) {
+      maxDistFromStart = Math.max(
+        maxDistFromStart,
+        Math.hypot(p.x - start.x, p.y - start.y),
+      );
+    }
+    if (m.absSumDeg < 1e-6) {
+      return { ...empty, maxDistFromStart };
+    }
     const coherence = Math.abs(m.signedSumDeg) / m.absSumDeg;
-    const maxCornerDeg = 48;
-    const minBendDeg = 22;
-    return (
+    const maxCornerDeg = 58;
+    const minBendDeg = 85;
+    const curveLike =
       m.maxAbsDeg <= maxCornerDeg &&
       m.absSumDeg >= minBendDeg &&
-      coherence >= 0.55
-    );
+      coherence >= 0.45;
+    const bounds = strokeBounds(hintPoints);
+    const observedSpan = Math.max(maxDistFromStart, bounds.width, bounds.height);
+    const curveScaleLen = observedSpan;
+    return {
+      curveLike,
+      maxDistFromStart,
+      curveScaleLen,
+    };
   }
 
   /** Any >45° turn in the quantized path (e.g. D→R) — disables curve-based scale boost. */
@@ -516,11 +554,8 @@
       return false;
 
     const sharp = pathHasSharpCorner(path);
-    const curveStroke = strokeShowsGentleDistributedCurvature(
-      gesturePoints,
-      settings,
-    );
-    const useCurve = !sharp && curveStroke;
+    const scaleHints = strokeScaleHints(gesturePoints, settings);
+    const useCurve = scaleHints.curveLike;
 
     const base = common.pipeScaleBase(settings);
     const firstDir = path[0];
@@ -545,21 +580,36 @@
     const dy = p.y - gestureStartClientPoint.y;
     const proj = dx * u.x + dy * u.y;
     const maxDist = Math.hypot(dx, dy);
-    const strokeLen = common.polylineLength(gesturePoints);
-    const radiusHintFromStroke = strokeLen / (2 * Math.PI);
 
-    if (sharp && gestureCurveBoostActive) {
+    if (sharp && gestureCurveBoostActive && !useCurve) {
       gestureCurveBoostActive = false;
-      gestureFirstSegmentMaxProjection = proj;
-      gesturePipeScale = clampGesturePipeScale(proj / base);
+      gestureCurveScaleLen = 0;
+      gestureFirstSegmentMaxProjection = Math.max(proj, maxDist * 0.75);
+      gesturePipeScale = clampGesturePipeScale(
+        gestureFirstSegmentMaxProjection / base,
+      );
     }
 
     const scaleLen = useCurve
-      ? Math.max(proj, maxDist, radiusHintFromStroke)
-      : proj;
-    if (useCurve) gestureCurveBoostActive = true;
-
-    if (scaleLen > gestureFirstSegmentMaxProjection) {
+      ? scaleHints.curveScaleLen
+      : Math.max(proj, scaleHints.maxDistFromStart * 0.75);
+    if (useCurve) {
+      gestureCurveBoostActive = true;
+      if (!gestureCurveScaleLen) gestureCurveScaleLen = scaleLen;
+      const boundedCurveLen = Math.min(
+        gestureCurveScaleLen * 1.08,
+        Math.max(gestureCurveScaleLen * 0.92, scaleLen),
+      );
+      gestureCurveScaleLen =
+        gestureCurveScaleLen * 0.78 + boundedCurveLen * 0.22;
+      const prevLen = gestureFirstSegmentMaxProjection || gestureCurveScaleLen;
+      const boundedPipeLen = Math.min(
+        prevLen * 1.05,
+        Math.max(prevLen * 0.95, gestureCurveScaleLen),
+      );
+      gestureFirstSegmentMaxProjection =
+        prevLen * 0.72 + boundedPipeLen * 0.28;
+    } else if (scaleLen > gestureFirstSegmentMaxProjection) {
       gestureFirstSegmentMaxProjection = scaleLen;
     }
 
@@ -572,7 +622,6 @@
   }
 
   function createGesturePipeCanvas() {
-    console.log("createGesturePipeCanvas");
     if (gesturePipeCanvas || !document.documentElement) return;
     gesturePipeCanvas = document.createElement("canvas");
     gesturePipeCanvas.setAttribute("aria-hidden", "true");
@@ -736,11 +785,24 @@
     );
     if (!settings.trainingMode) return;
     if (!tracking || !pipeState) return;
-    const surviving = pipeState.pipes.filter((p) => !p.eliminated);
+    const bestByAction = new Map();
+    for (const pipe of pipeState.pipes) {
+      if (pipe.eliminated) continue;
+      const current = bestByAction.get(pipe.action);
+      const pipeScore = Number.isFinite(pipe.score) ? pipe.score : pipe.progress;
+      const currentScore =
+        current && Number.isFinite(current.score)
+          ? current.score
+          : current
+            ? current.progress
+            : -Infinity;
+      if (!current || pipeScore > currentScore) bestByAction.set(pipe.action, pipe);
+    }
+    const surviving = Array.from(bestByAction.values());
     if (!surviving.length) return;
-    const radiusPx =
-      pipeState.radius * trailPixelRatio * gestureOverlayZoomBoost();
     for (const pipe of surviving) {
+      const pipeRadius = pipe.radius || pipeState.radius;
+      const radiusPx = pipeRadius * trailPixelRatio * gestureOverlayZoomBoost();
       const trailPts = pipe.centerline.map((p) => gesturePointToTrailPoint(p));
       drawPipe(trailPts, pipe.action, radiusPx);
     }
@@ -1119,6 +1181,7 @@
     gesturePipeScaleLocked = false;
     gestureFirstSegmentMaxProjection = 0;
     gestureCurveBoostActive = false;
+    gestureCurveScaleLen = 0;
     pipeState = common.createPipeMatchState(
       settings,
       { x: startGesturePoint.x, y: startGesturePoint.y },
@@ -1149,6 +1212,7 @@
     gesturePipeScaleLocked = false;
     gestureFirstSegmentMaxProjection = 0;
     gestureCurveBoostActive = false;
+    gestureCurveScaleLen = 0;
     gestureStartClientPoint = null;
     clearGesturePipeOverlay();
     removeGestureHint();
@@ -1166,6 +1230,7 @@
       undefined,
       observedPath,
       settings,
+      gesturePoints,
     );
 
     resetGestureState();
@@ -1239,6 +1304,69 @@
     }
   }
 
+  /**
+   * Process one pointer position for direction path + pipe matching.
+   * Call from mousemove; also call once on pointer release with
+   * `updateVisuals: false` so the final segment is committed when the last
+   * interval before button-up did not yet reach minSegmentPx from the anchor
+   * (common on fast D→R-style strokes with sparse coalesced move events).
+   */
+  function ingestGesturePointerSample(
+    clientX,
+    clientY,
+    { updateVisuals = true } = {},
+  ) {
+    if (!tracking || !anchorPoint) return;
+
+    strokePoints.push({ x: clientX, y: clientY });
+    const gesturePoint = toGesturePoint(clientX, clientY);
+    gesturePoints.push(gesturePoint);
+
+    const state = { anchorX: anchorPoint.x, anchorY: anchorPoint.y };
+    const { stepDist, pushed } = common.processGestureMove(
+      state,
+      gesturePoint.x,
+      gesturePoint.y,
+      settings.minSegmentPx,
+      path,
+    );
+    totalDistance += stepDist;
+    anchorPoint = { x: state.anchorX, y: state.anchorY };
+
+    if (pushed) {
+      appendDebugLog(
+        `Direction added: path=${path.join(" -> ")}, step=${stepDist.toFixed(1)}`,
+      );
+    }
+    const scaleChanged = updateGesturePipeScaleFromStroke();
+    if (scaleChanged) {
+      appendDebugLog(`Pipe scale updated: x${gesturePipeScale.toFixed(2)}`);
+    }
+
+    pipeState = common.advancePipeMatchState(
+      pipeState,
+      { x: gesturePoint.x, y: gesturePoint.y },
+      gesturePipeScale,
+      settings,
+      path,
+    );
+
+    if (pipeState && pipeState.allEliminated && path.length > 0) {
+      appendDebugLog("All pipes eliminated — aborting gesture.");
+      resetGestureState();
+      clearTrail();
+      finishTrail();
+      return;
+    }
+
+    if (updateVisuals) {
+      redrawGesturePipeOverlay();
+      extendTrail(clientX, clientY);
+      syncGestureHint(clientX, clientY);
+      updateDebugCandidatesBar();
+    }
+  }
+
   function onMouseDown(event) {
     if (isRockerMouseDown(event)) {
       const action = getRockerActionForButton(event.button);
@@ -1292,54 +1420,15 @@
     if (!tracking || !anchorPoint) return;
 
     if ((event.buttons & getConfiguredMouseButtonMask()) === 0) {
-      completeGesture(false);
+      // Do not end the gesture here: some platforms deliver a move with
+      // button released before mouseup, which would have completed with
+      // allowAction=false and stolen the real release. Flush coordinates only.
+      ingestGesturePointerSample(event.clientX, event.clientY, {
+        updateVisuals: true,
+      });
       return;
     }
-    strokePoints.push({ x: event.clientX, y: event.clientY });
-    const gesturePoint = toGesturePoint(event.clientX, event.clientY);
-    gesturePoints.push(gesturePoint);
-
-    const state = { anchorX: anchorPoint.x, anchorY: anchorPoint.y };
-    const { stepDist, pushed } = common.processGestureMove(
-      state,
-      gesturePoint.x,
-      gesturePoint.y,
-      settings.minSegmentPx,
-      path,
-    );
-    totalDistance += stepDist;
-    anchorPoint = { x: state.anchorX, y: state.anchorY };
-
-    if (pushed) {
-      appendDebugLog(
-        `Direction added: path=${path.join(" -> ")}, step=${stepDist.toFixed(1)}`,
-      );
-    }
-    const scaleChanged = updateGesturePipeScaleFromStroke();
-    if (scaleChanged) {
-      appendDebugLog(`Pipe scale updated: x${gesturePipeScale.toFixed(2)}`);
-    }
-
-    pipeState = common.advancePipeMatchState(
-      pipeState,
-      { x: gesturePoint.x, y: gesturePoint.y },
-      gesturePipeScale,
-      settings,
-      path,
-    );
-
-    if (pipeState && pipeState.allEliminated && path.length > 0) {
-      appendDebugLog("All pipes eliminated — aborting gesture.");
-      resetGestureState();
-      clearTrail();
-      finishTrail();
-      return;
-    }
-
-    redrawGesturePipeOverlay();
-    redrawTrailSegmented();
-    syncGestureHint(event.clientX, event.clientY);
-    updateDebugCandidatesBar();
+    ingestGesturePointerSample(event.clientX, event.clientY);
   }
 
   function onMouseUp(event) {
@@ -1348,6 +1437,20 @@
       return;
     }
     if (!tracking) return;
+
+    ingestGesturePointerSample(event.clientX, event.clientY, {
+      updateVisuals: false,
+    });
+    if (!tracking) {
+      // ingestGesturePointerSample may have aborted (all pipes eliminated)
+      if (
+        isMatchingMouseButton(event.button) &&
+        settings.triggerMouseButton === "right"
+      ) {
+        lastRightStationaryClickAt = 0;
+      }
+      return;
+    }
 
     if (
       settings.triggerMouseButton === "right" &&

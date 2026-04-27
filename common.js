@@ -704,6 +704,54 @@
     return Math.max(1, pipeRadius - trailHalf);
   }
 
+  function pipeScaleCandidates(scaleFactor) {
+    const base = Math.max(1, scaleFactor || 1);
+    const raw = [base * 0.95, base, base * 1.08];
+    const out = [];
+    for (const v of raw) {
+      const s = Math.min(20, Math.max(1, v));
+      if (!out.some((x) => Math.abs(x - s) < 0.03)) out.push(s);
+    }
+    return out;
+  }
+
+  function startDirectionForPolyline(polyline, minDistance) {
+    if (!polyline || polyline.length < 2) return null;
+    const start = polyline[0];
+    const minDist = Math.max(1, minDistance || 1);
+    for (let i = 1; i < polyline.length; i += 1) {
+      const p = polyline[i];
+      const dx = p.x - start.x;
+      const dy = p.y - start.y;
+      if (Math.hypot(dx, dy) >= minDist) {
+        return vectorToDirection(dx, dy);
+      }
+    }
+    const last = polyline[polyline.length - 1];
+    return vectorToDirection(last.x - start.x, last.y - start.y);
+  }
+
+  function templatePipePrefixMatch(pipe, settings, observedPath) {
+    if (!observedPath || observedPath.length === 0) return true;
+    const toks = settings.gestures[pipe.action];
+    if (Array.isArray(toks) && toks.length > 0) return true;
+    const expected = startDirectionForPolyline(
+      pipe.centerline,
+      settings.minSegmentPx * 0.8,
+    );
+    const observed = observedPath[0];
+    const observedAngle = angleForDirection(observed);
+    const expectedAngle = angleForDirection(expected);
+    if (!Number.isFinite(observedAngle) || !Number.isFinite(expectedAngle)) {
+      return true;
+    }
+    const tolerance = Math.max(
+      settings.inaccuracyDegrees || DEFAULT_SETTINGS.inaccuracyDegrees,
+      55,
+    );
+    return angularDifference(observedAngle, expectedAngle) <= tolerance;
+  }
+
   function pointAtArcLength(polyline, arcLength) {
     if (!polyline || polyline.length < 2) return null;
     const target = Math.max(0, arcLength || 0);
@@ -822,21 +870,35 @@
     const pipes = [];
     for (const action of ACTIONS) {
       if (!actionIsConfigured(action, settings)) continue;
-      const centerline = buildPipeCenterline(
-        action,
-        settings,
-        startPoint,
-        scaleFactor,
-      );
-      if (!centerline) continue;
-      pipes.push({
-        action,
-        centerline,
-        progress: 0,
-        arcLength: 0,
-        lastPoint: { x: startPoint.x, y: startPoint.y },
-        eliminated: false,
-      });
+      for (const candidateScale of pipeScaleCandidates(scaleFactor)) {
+        const centerline = buildPipeCenterline(
+          action,
+          settings,
+          startPoint,
+          candidateScale,
+        );
+        if (!centerline) continue;
+        const radius = computePipeRadius(candidateScale, settings);
+        const containmentRadius = computePipeContainmentRadius(
+          candidateScale,
+          settings,
+        );
+        pipes.push({
+          action,
+          centerline,
+          progress: 0,
+          arcLength: 0,
+          lastPoint: { x: startPoint.x, y: startPoint.y },
+          scaleFactor: candidateScale,
+          radius,
+          containmentRadius,
+          misses: 0,
+          tokenMisses: 0,
+          penalty: 0,
+          score: 0,
+          eliminated: false,
+        });
+      }
     }
     const radius = computePipeRadius(scaleFactor, settings);
     const containmentRadius = computePipeContainmentRadius(
@@ -855,7 +917,8 @@
 
   /**
    * Per-move update: rebuild geometry if scale changed, then test containment.
-   * Once a pipe is eliminated it stays eliminated.
+   * Near misses accrue penalty before elimination, which helps noisy fast strokes
+   * without letting candidates jump arbitrarily along the centerline.
    */
   function advancePipeMatchState(
     prevState,
@@ -872,26 +935,59 @@
     if (scaleChanged) {
       radius = computePipeRadius(scaleFactor, settings);
       containmentRadius = computePipeContainmentRadius(scaleFactor, settings);
-      pipes = pipes.map((pipe) => {
-        if (pipe.eliminated) return pipe;
+      const rebuilt = [];
+      for (const oldPipe of pipes) {
+        const scaleRatio =
+          prevState.scaleFactor > 1e-6
+            ? oldPipe.scaleFactor / prevState.scaleFactor
+            : 1;
+        const candidateScale = Math.min(20, Math.max(1, scaleFactor * scaleRatio));
         const centerline = buildPipeCenterline(
-          pipe.action,
+          oldPipe.action,
           settings,
           prevState.startPoint,
-          scaleFactor,
+          candidateScale,
         );
-        if (!centerline) return { ...pipe, eliminated: true };
+        if (!centerline) {
+          rebuilt.push({ ...oldPipe, eliminated: true });
+          continue;
+        }
+        const radiusForPipe = computePipeRadius(candidateScale, settings);
+        const containmentForPipe = computePipeContainmentRadius(
+          candidateScale,
+          settings,
+        );
         const lastPoint =
-          pointAtArcLength(centerline, pipe.arcLength || 0) ||
+          pointAtArcLength(centerline, oldPipe.arcLength || 0) ||
           prevState.startPoint;
-        return { ...pipe, centerline, lastPoint };
-      });
+        rebuilt.push({
+          ...oldPipe,
+          centerline,
+          lastPoint,
+          scaleFactor: candidateScale,
+          radius: radiusForPipe,
+          containmentRadius: containmentForPipe,
+        });
+      }
+      pipes = rebuilt;
     }
     const updated = pipes.map((pipe) => {
       if (pipe.eliminated) return pipe;
-      if (!gestureTokensPrefixMatch(pipe.action, settings, observedPath)) {
-        return { ...pipe, eliminated: true };
+      if (
+        !gestureTokensPrefixMatch(pipe.action, settings, observedPath) ||
+        !templatePipePrefixMatch(pipe, settings, observedPath)
+      ) {
+        const tokenMisses = (pipe.tokenMisses || 0) + 1;
+        if (tokenMisses >= 2) return { ...pipe, eliminated: true };
+        return {
+          ...pipe,
+          tokenMisses,
+          penalty: (pipe.penalty || 0) + 0.18,
+          score: (pipe.score || 0) - 0.18,
+        };
       }
+      const pipeContainmentRadius =
+        pipe.containmentRadius || containmentRadius || 1;
       const currentArc = Math.max(0, pipe.arcLength || 0);
       const prevPoint =
         pipe.lastPoint ||
@@ -901,11 +997,11 @@
       const moveY = mousePoint.y - prevPoint.y;
       const moveLen = Math.hypot(moveX, moveY);
       const backtrackWindow = Math.max(
-        containmentRadius * 0.75,
+        pipeContainmentRadius * 0.75,
         settings.minSegmentPx * 0.5,
       );
       const leadWindow = Math.max(
-        containmentRadius * 3.25,
+        pipeContainmentRadius * 3.25,
         settings.minSegmentPx * 2.2,
         moveLen * 2.4,
       );
@@ -917,20 +1013,35 @@
         minArc,
         maxArc,
       );
-      if (
-        !Number.isFinite(info.distance) ||
-        info.distance > containmentRadius
-      ) {
+      if (!Number.isFinite(info.distance)) {
         return { ...pipe, eliminated: true };
       }
+      const hardLimit = pipeContainmentRadius * 2.25;
+      if (info.distance > hardLimit) return { ...pipe, eliminated: true };
+
+      const outsideBy = info.distance - pipeContainmentRadius;
+      const wasOutside = outsideBy > 0;
+      const misses = wasOutside ? (pipe.misses || 0) + 1 : 0;
+      if (misses >= 3) return { ...pipe, eliminated: true };
 
       const nextArc = Math.max(currentArc, info.arcLength);
       const nextPoint = pointAtArcLength(pipe.centerline, nextArc) || prevPoint;
+      const nextProgress = Math.max(pipe.progress, info.progress);
+      const distanceRatio = info.distance / Math.max(1, pipeContainmentRadius);
+      const penalty = Math.max(
+        0,
+        (pipe.penalty || 0) * (wasOutside ? 1 : 0.82) +
+          (wasOutside ? Math.min(0.22, outsideBy / (pipeContainmentRadius * 3)) : 0),
+      );
       return {
         ...pipe,
-        progress: Math.max(pipe.progress, info.progress),
+        progress: nextProgress,
         arcLength: nextArc,
         lastPoint: nextPoint,
+        misses,
+        tokenMisses: 0,
+        penalty,
+        score: nextProgress - penalty - distanceRatio * 0.08,
       };
     });
     const surviving = updated.filter((p) => !p.eliminated);
@@ -955,6 +1066,46 @@
     return true;
   }
 
+  function templateMeanDistance(a, b) {
+    if (
+      !Array.isArray(a) ||
+      !Array.isArray(b) ||
+      a.length !== PATH_TEMPLATE_SAMPLES ||
+      b.length !== PATH_TEMPLATE_SAMPLES
+    ) {
+      return Infinity;
+    }
+    let total = 0;
+    for (let i = 0; i < PATH_TEMPLATE_SAMPLES; i += 1) {
+      const pa = a[i];
+      const pb = b[i];
+      if (!Array.isArray(pa) || !Array.isArray(pb)) return Infinity;
+      total += Math.hypot(pa[0] - pb[0], pa[1] - pb[1]);
+    }
+    return total / PATH_TEMPLATE_SAMPLES;
+  }
+
+  function templateResolveBonus(action, settings, observedTemplate) {
+    const template =
+      settings && settings.gesturePathTemplates
+        ? settings.gesturePathTemplates[action]
+        : null;
+    if (
+      !template ||
+      !observedTemplate ||
+      !Array.isArray(template) ||
+      template.length !== PATH_TEMPLATE_SAMPLES
+    ) {
+      return { bonus: 0, distance: Infinity };
+    }
+    const distance = templateMeanDistance(template, observedTemplate);
+    if (!Number.isFinite(distance)) return { bonus: 0, distance: Infinity };
+    return {
+      bonus: Math.max(-0.45, 0.5 - distance),
+      distance,
+    };
+  }
+
   /**
    * Pick the best surviving pipe. Prefer configured token paths that exactly
    * match the observed direction sequence over template-only gestures, so a
@@ -965,12 +1116,30 @@
     minProgressFraction,
     observedPath,
     settings,
+    observedPoints,
   ) {
     if (!state || state.allEliminated) return null;
     const minProg = minProgressFraction != null ? minProgressFraction : 0.3;
-    const surviving = state.pipes.filter((p) => !p.eliminated);
+    const observedTemplate =
+      observedPoints && observedPoints.length >= 2
+        ? normalizeStrokeToTemplate(observedPoints)
+        : null;
+    const bestByAction = new Map();
+    for (const pipe of state.pipes) {
+      if (pipe.eliminated) continue;
+      const prev = bestByAction.get(pipe.action);
+      const pipeScore = Number.isFinite(pipe.score) ? pipe.score : pipe.progress;
+      const prevScore =
+        prev && Number.isFinite(prev.score) ? prev.score : prev ? prev.progress : -Infinity;
+      if (!prev || pipeScore > prevScore) bestByAction.set(pipe.action, pipe);
+    }
+    const surviving = Array.from(bestByAction.values());
     if (!surviving.length) return null;
     const canTok = !!(settings && observedPath && observedPath.length);
+    const resolveScore = (pipe) => {
+      const baseScore = Number.isFinite(pipe.score) ? pipe.score : pipe.progress;
+      return baseScore + templateResolveBonus(pipe.action, settings, observedTemplate).bonus;
+    };
     surviving.sort((a, b) => {
       if (canTok) {
         const ea = gestureTokensExactPathMatch(a.action, settings, observedPath)
@@ -981,18 +1150,46 @@
           : 0;
         if (ea !== eb) return eb - ea;
       }
-      if (Math.abs(a.progress - b.progress) > 0.01)
-        return b.progress - a.progress;
+      const sa = resolveScore(a);
+      const sb = resolveScore(b);
+      if (Math.abs(sa - sb) > 0.01) return sb - sa;
+      if (Math.abs(a.progress - b.progress) > 0.01) return b.progress - a.progress;
       return ACTIONS.indexOf(a.action) - ACTIONS.indexOf(b.action);
     });
     const best = surviving[0];
     if (best.progress < minProg) return null;
+    const bestTemplate = templateResolveBonus(
+      best.action,
+      settings,
+      observedTemplate,
+    );
+    if (
+      Number.isFinite(bestTemplate.distance) &&
+      bestTemplate.distance > 0.8 &&
+      !gestureTokensExactPathMatch(best.action, settings, observedPath)
+    ) {
+      return null;
+    }
+    if (
+      surviving.length > 1 &&
+      !gestureTokensExactPathMatch(best.action, settings, observedPath)
+    ) {
+      const bestScore = resolveScore(best);
+      const second = surviving[1];
+      const secondScore = resolveScore(second);
+      if (secondScore >= bestScore - 0.06) return null;
+    }
     return best.action;
   }
 
   function survivingPipeActions(state) {
     if (!state) return [];
-    return state.pipes.filter((p) => !p.eliminated).map((p) => p.action);
+    const out = [];
+    for (const pipe of state.pipes) {
+      if (pipe.eliminated || out.includes(pipe.action)) continue;
+      out.push(pipe.action);
+    }
+    return out;
   }
 
   globalThis.NaviGesturesCommon = {
