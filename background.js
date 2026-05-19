@@ -200,8 +200,104 @@
     }
   }
 
+  function getAllFramesInTab(tabId) {
+    const nav = api.webNavigation;
+    if (!nav || typeof nav.getAllFrames !== "function") {
+      return Promise.resolve(null);
+    }
+    if (isBrowserApi) {
+      return nav.getAllFrames({ tabId }).catch(() => null);
+    }
+    return new Promise((resolve) => {
+      try {
+        nav.getAllFrames({ tabId }, (frames) => {
+          const err = api.runtime && api.runtime.lastError;
+          resolve(err ? null : frames);
+        });
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
+  function sendTabMessageToFrame(tabId, message, frameId) {
+    let p = null;
+    try {
+      p = api.tabs.sendMessage(tabId, message, { frameId });
+    } catch (_) {
+      /* ignore */
+    }
+    if (p && typeof p.catch === "function") p.catch(() => {});
+  }
+
+  function broadcastTabMessageToAllFrames(tabId, message) {
+    void getAllFramesInTab(tabId).then((frames) => {
+      if (!Array.isArray(frames) || frames.length === 0) {
+        sendTabMessageToFrame(tabId, message, 0);
+        return;
+      }
+      const seen = new Set();
+      for (const frame of frames) {
+        if (!frame || typeof frame.frameId !== "number") continue;
+        if (seen.has(frame.frameId)) continue;
+        seen.add(frame.frameId);
+        sendTabMessageToFrame(tabId, message, frame.frameId);
+      }
+    });
+  }
+
   api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message) return;
+
+    const tabFromSender =
+      sender && sender.tab ? sender.tab.id : null;
+
+    if (message.type === "navigestures-pointer-relay") {
+      if (tabFromSender == null) return false;
+      const relay = {};
+      relay.kind = message.kind;
+      relay.clientX = message.clientX;
+      relay.clientY = message.clientY;
+      relay.buttons = message.buttons;
+      relay.button = message.button;
+      relay.altKey = message.altKey;
+      relay.shiftKey = message.shiftKey;
+      relay.ctrlKey = message.ctrlKey;
+      relay.metaKey = message.metaKey;
+      relay.deltaX = message.deltaX;
+      relay.deltaY = message.deltaY;
+      relay.deltaMode = message.deltaMode;
+      const payload = {
+        type: "navigestures-handle-relay",
+        relay,
+      };
+      let p = null;
+      try {
+        p = api.tabs.sendMessage(tabFromSender, payload, { frameId: 0 });
+      } catch (_) {
+        /* ignore */
+      }
+      if (p && typeof p.catch === "function") p.catch(() => {});
+      return false;
+    }
+
+    if (message.type === "navigestures-broadcast-context-suppress") {
+      if (tabFromSender == null) return false;
+      broadcastTabMessageToAllFrames(tabFromSender, {
+        type: "navigestures-remote-suppress-context",
+      });
+      return false;
+    }
+
+    if (message.type === "navigestures-broadcast-iframe-gesture") {
+      if (tabFromSender == null) return false;
+      broadcastTabMessageToAllFrames(tabFromSender, {
+        type: "navigestures-iframe-gesture-active",
+        active: !!message.active,
+      });
+      return false;
+    }
+
     if (message.type === "navigestures-get-tab-zoom") {
       const tabId = sender && sender.tab && sender.tab.id;
       if (tabId == null) {

@@ -56,6 +56,9 @@ let gestureCurveScaleLen = 0;
   let overlayViewportListener = null;
   /** From `tabs.getZoom` (Ctrl+/- page zoom); combined with visual viewport pinch in `getOverlayZoomCompensationFactor`. */
   let cachedTabZoomFactor = 1;
+  const NG_IS_TOP_FRAME = window === window.top;
+  let pendingRemoteIframeContextSuppressUntil = 0;
+  const REMOTE_IFRAME_CONTEXT_SUPPRESS_MS = 5500;
 
   function randomNaviGesturesUiSuffix() {
     try {
@@ -80,7 +83,7 @@ let gestureCurveScaleLen = 0;
   }
 
   function appendDebugLog(message) {
-    if (!settings.showDebugLogWindow) return;
+    if (!NG_IS_TOP_FRAME || !settings.showDebugLogWindow) return;
     if (!debugLogBody) return;
     debugLogLines.push(`[${nowTimeLabel()}] ${message}`);
     if (debugLogLines.length > DEBUG_LOG_MAX_LINES) {
@@ -262,6 +265,7 @@ let gestureCurveScaleLen = 0;
   }
 
   function syncDebugPanelVisibility() {
+    if (!NG_IS_TOP_FRAME) return;
     if (settings.showDebugLogWindow) {
       createDebugPanel();
       return;
@@ -334,6 +338,150 @@ let gestureCurveScaleLen = 0;
       default:
         return true;
     }
+  }
+
+  function clientCoordsInTopViewport(clientX, clientY) {
+    try {
+      let x = clientX;
+      let y = clientY;
+      let w = window;
+      while (w !== w.top) {
+        const fe = w.frameElement;
+        if (!fe) return null;
+        const r = fe.getBoundingClientRect();
+        x += r.left;
+        y += r.top;
+        w = w.parent;
+      }
+      return { clientX: x, clientY: y };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function setSuppressFollowingContextMenu() {
+    suppressNextContextMenu = true;
+    if (!NG_IS_TOP_FRAME) return;
+    try {
+      api.runtime.sendMessage({ type: "navigestures-broadcast-context-suppress" });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function broadcastIframeGestureActive(active) {
+    if (!NG_IS_TOP_FRAME) return;
+    try {
+      api.runtime.sendMessage({
+        type: "navigestures-broadcast-iframe-gesture",
+        active: !!active,
+      });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function buildRelaySynthEvent(relay) {
+    const rel = relay || {};
+    return {
+      clientX: rel.clientX ?? 0,
+      clientY: rel.clientY ?? 0,
+      buttons: typeof rel.buttons === "number" ? rel.buttons : 0,
+      button: typeof rel.button === "number" ? rel.button : 0,
+      altKey: !!rel.altKey,
+      shiftKey: !!rel.shiftKey,
+      ctrlKey: !!rel.ctrlKey,
+      metaKey: !!rel.metaKey,
+      deltaX: typeof rel.deltaX === "number" ? rel.deltaX : 0,
+      deltaY: typeof rel.deltaY === "number" ? rel.deltaY : 0,
+      deltaMode: typeof rel.deltaMode === "number" ? rel.deltaMode : 0,
+      preventDefault() {},
+      stopPropagation() {},
+      stopImmediatePropagation() {},
+    };
+  }
+
+  function applyRelayedPointer(relay) {
+    if (!NG_IS_TOP_FRAME || !relay || !relay.kind) return;
+    switch (relay.kind) {
+      case "mousedown":
+        onMouseDown(buildRelaySynthEvent(relay));
+        break;
+      case "mousemove":
+        onMouseMove(buildRelaySynthEvent(relay));
+        break;
+      case "mouseup":
+        onMouseUp(buildRelaySynthEvent(relay));
+        break;
+      case "wheel":
+        onWheel(buildRelaySynthEvent(relay));
+        break;
+      default:
+        break;
+    }
+  }
+
+  let sawPointerRelayError = false;
+  let subframeRightGestureContextGuardUntil = 0;
+  let subframeRemoteGestureActive = false;
+
+  function armSubframeRightGestureContextGuard() {
+    subframeRightGestureContextGuardUntil = Date.now() + 5500;
+  }
+
+  function disarmSubframeRightGestureContextGuard() {
+    subframeRightGestureContextGuardUntil = 0;
+  }
+
+  function relayPointerToMainFrame(kind, relayPayload) {
+    try {
+      const payload = Object.assign({}, relayPayload, {
+        type: "navigestures-pointer-relay",
+        kind,
+      });
+      if (isBrowserApi) {
+        const p = api.runtime.sendMessage(payload);
+        if (p && typeof p.catch === "function") {
+          p.catch(() => {
+            if (!sawPointerRelayError && settings.showDebugLogWindow) {
+              sawPointerRelayError = true;
+              appendDebugLog("Pointer relay: background messaging failed.");
+            }
+          });
+        }
+      } else {
+        api.runtime.sendMessage(payload, () => {
+          const err = api.runtime && api.runtime.lastError;
+          if (err && !sawPointerRelayError && settings.showDebugLogWindow) {
+            sawPointerRelayError = true;
+            appendDebugLog("Pointer relay: background messaging failed.");
+          }
+        });
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function envelopeFromMouse(event, xy) {
+    return {
+      clientX: xy.clientX,
+      clientY: xy.clientY,
+      buttons: event.buttons,
+      button: event.button,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+    };
+  }
+
+  function envelopeFromWheel(event, xy) {
+    const base = envelopeFromMouse(event, xy);
+    base.deltaX = event.deltaX;
+    base.deltaY = event.deltaY;
+    base.deltaMode = typeof event.deltaMode === "number" ? event.deltaMode : 0;
+    return base;
   }
 
   function storageGet(key) {
@@ -1197,6 +1345,7 @@ let gestureCurveScaleLen = 0;
     appendDebugLog(
       `Gesture start at (${Math.round(startX)}, ${Math.round(startY)})`,
     );
+    broadcastIframeGestureActive(true);
   }
 
   function resetGestureState() {
@@ -1234,6 +1383,7 @@ let gestureCurveScaleLen = 0;
     );
 
     resetGestureState();
+    broadcastIframeGestureActive(false);
     finishTrail();
 
     appendDebugLog(
@@ -1253,13 +1403,13 @@ let gestureCurveScaleLen = 0;
       appendDebugLog(`Pipe match: ${action}`);
       sendGestureAction(action);
       if (settings.triggerMouseButton === "right")
-        suppressNextContextMenu = true;
+        setSuppressFollowingContextMenu();
     } else if (observedDistance >= settings.minSegmentPx * 1.5) {
       appendDebugLog(
         "No pipe completed (insufficient progress), suppressing context menu due to substantial movement.",
       );
       if (settings.triggerMouseButton === "right")
-        suppressNextContextMenu = true;
+        setSuppressFollowingContextMenu();
     } else {
       appendDebugLog(
         "No pipe completed and movement too small to suppress context menu.",
@@ -1274,6 +1424,7 @@ let gestureCurveScaleLen = 0;
       clearTrailTimer = null;
     }
     resetGestureState();
+    broadcastIframeGestureActive(false);
     clearTrail();
     appendDebugLog("Gesture cancelled.");
   }
@@ -1354,6 +1505,7 @@ let gestureCurveScaleLen = 0;
     if (pipeState && pipeState.allEliminated && path.length > 0) {
       appendDebugLog("All pipes eliminated — aborting gesture.");
       resetGestureState();
+      broadcastIframeGestureActive(false);
       clearTrail();
       finishTrail();
       return;
@@ -1373,7 +1525,7 @@ let gestureCurveScaleLen = 0;
       if (action !== "none") {
         if (tracking) cancelGesture();
         suppressPointerEventsAfterRocker();
-        suppressNextContextMenu = true;
+        setSuppressFollowingContextMenu();
         event.preventDefault();
         event.stopPropagation();
         appendDebugLog(
@@ -1516,7 +1668,7 @@ let gestureCurveScaleLen = 0;
     if (tracking) cancelGesture();
     lastRockerWheelAt = now;
     suppressPointerEventsAfterRocker();
-    suppressNextContextMenu = true;
+    setSuppressFollowingContextMenu();
     event.preventDefault();
     event.stopPropagation();
     appendDebugLog(
@@ -1530,6 +1682,7 @@ let gestureCurveScaleLen = 0;
     settings = common.sanitizeSettings(
       changes.settings.newValue || common.DEFAULT_SETTINGS,
     );
+    if (!NG_IS_TOP_FRAME) return;
     applyTrailStyle();
     syncDebugPanelVisibility();
     refreshOverlaysForZoom();
@@ -1538,27 +1691,153 @@ let gestureCurveScaleLen = 0;
   });
 
   api.runtime.onMessage.addListener((message) => {
-    if (!message || message.type !== "navigestures-tab-zoom-changed") return;
-    if (typeof message.zoom === "number" && message.zoom > 0) {
-      cachedTabZoomFactor = message.zoom;
-      refreshOverlaysForZoom();
+    if (!message) return;
+    if (message.type === "navigestures-tab-zoom-changed") {
+      if (
+        NG_IS_TOP_FRAME &&
+        typeof message.zoom === "number" &&
+        message.zoom > 0
+      ) {
+        cachedTabZoomFactor = message.zoom;
+        refreshOverlaysForZoom();
+      }
+      return;
+    }
+    if (message.type === "navigestures-handle-relay" && NG_IS_TOP_FRAME) {
+      applyRelayedPointer(message.relay);
+      return;
+    }
+    if (message.type === "navigestures-remote-suppress-context" && !NG_IS_TOP_FRAME) {
+      pendingRemoteIframeContextSuppressUntil =
+        Date.now() + REMOTE_IFRAME_CONTEXT_SUPPRESS_MS;
+      return;
+    }
+    if (
+      message.type === "navigestures-iframe-gesture-active" &&
+      !NG_IS_TOP_FRAME
+    ) {
+      subframeRemoteGestureActive = !!message.active;
+      if (!message.active) {
+        pendingRemoteIframeContextSuppressUntil = 0;
+      }
     }
   });
 
   window.addEventListener("DOMContentLoaded", syncDebugPanelVisibility, {
     once: true,
   });
-  if (document.documentElement) {
-    createTrailCanvas();
-  } else {
-    window.addEventListener("DOMContentLoaded", createTrailCanvas, {
-      once: true,
-    });
+  if (NG_IS_TOP_FRAME) {
+    if (document.documentElement) {
+      createTrailCanvas();
+    } else {
+      window.addEventListener("DOMContentLoaded", createTrailCanvas, {
+        once: true,
+      });
+    }
+    window.addEventListener("resize", resizeTrailCanvas);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", resizeTrailCanvas);
+      window.visualViewport.addEventListener("scroll", resizeTrailCanvas);
+    }
   }
-  window.addEventListener("resize", resizeTrailCanvas);
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener("resize", resizeTrailCanvas);
-    window.visualViewport.addEventListener("scroll", resizeTrailCanvas);
+
+  async function loadBridgeSettingsOnly() {
+    const data = await storageGet("settings");
+    settings = common.sanitizeSettings(
+      data.settings || common.DEFAULT_SETTINGS,
+    );
+  }
+
+  function subframeOnMouseDownForRelay(event) {
+    const xy = clientCoordsInTopViewport(event.clientX, event.clientY);
+    if (!xy) return;
+
+    if (isRockerMouseDown(event)) {
+      suppressPointerEventsAfterRocker();
+      event.preventDefault();
+      event.stopPropagation();
+      relayPointerToMainFrame("mousedown", envelopeFromMouse(event, xy));
+      return;
+    }
+    if (!isMatchingMouseButton(event.button)) return;
+    if (!isModifierSatisfied(event)) return;
+
+    if (settings.triggerMouseButton === "right") {
+      event.preventDefault();
+      armSubframeRightGestureContextGuard();
+    }
+    relayPointerToMainFrame("mousedown", envelopeFromMouse(event, xy));
+  }
+
+  function subframeOnMouseMoveForRelay(event) {
+    if ((event.buttons & 7) === 0) return;
+    const xy = clientCoordsInTopViewport(event.clientX, event.clientY);
+    if (!xy) return;
+    relayPointerToMainFrame("mousemove", envelopeFromMouse(event, xy));
+  }
+
+  function subframeOnMouseUpForRelay(event) {
+    const xy = clientCoordsInTopViewport(event.clientX, event.clientY);
+    if (!xy) return;
+    if (settings.triggerMouseButton === "right" && event.button === 2) {
+      disarmSubframeRightGestureContextGuard();
+    }
+    relayPointerToMainFrame("mouseup", envelopeFromMouse(event, xy));
+  }
+
+  function subframeOnWheelForRelay(event) {
+    if (!isLikelyRockerWheelEvent(event)) return;
+    const xy = clientCoordsInTopViewport(event.clientX, event.clientY);
+    if (!xy) return;
+    suppressPointerEventsAfterRocker();
+    event.preventDefault();
+    event.stopPropagation();
+    relayPointerToMainFrame("wheel", envelopeFromWheel(event, xy));
+  }
+
+  function subframeRelayContextMenu(event) {
+    if (Date.now() < pendingRemoteIframeContextSuppressUntil) {
+      pendingRemoteIframeContextSuppressUntil = 0;
+      event.preventDefault();
+      return;
+    }
+    if (shouldSuppressPointerAfterRocker()) {
+      event.preventDefault();
+      return;
+    }
+    if (
+      settings.triggerMouseButton === "right" &&
+      (subframeRemoteGestureActive ||
+        Date.now() < subframeRightGestureContextGuardUntil)
+    ) {
+      event.preventDefault();
+    }
+  }
+
+  function subframeOnClickRelay(event) {
+    if (!shouldSuppressPointerAfterRocker()) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function subframeOnAuxClickRelay(event) {
+    if (!shouldSuppressPointerAfterRocker()) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  async function attachSubframePointerBridge() {
+    await loadBridgeSettingsOnly();
+    window.addEventListener("mousedown", subframeOnMouseDownForRelay, true);
+    window.addEventListener("mousemove", subframeOnMouseMoveForRelay, true);
+    window.addEventListener("mouseup", subframeOnMouseUpForRelay, true);
+    window.addEventListener("contextmenu", subframeRelayContextMenu, true);
+    window.addEventListener("click", subframeOnClickRelay, true);
+    window.addEventListener("auxclick", subframeOnAuxClickRelay, true);
+    window.addEventListener("wheel", subframeOnWheelForRelay, {
+      capture: true,
+      passive: false,
+    });
   }
 
   async function attachGestureListenersAfterSettings() {
@@ -1580,5 +1859,9 @@ let gestureCurveScaleLen = 0;
     });
   }
 
-  void attachGestureListenersAfterSettings();
+  if (NG_IS_TOP_FRAME) {
+    void attachGestureListenersAfterSettings();
+  } else {
+    void attachSubframePointerBridge();
+  }
 })();
