@@ -294,15 +294,59 @@ let gestureCurveScaleLen = 0;
     return (buttonMask & 4) !== 0;
   }
 
+  function isLeftButtonPressed(buttonMask) {
+    return (buttonMask & 1) !== 0;
+  }
+
+  function isRightButtonPressed(buttonMask) {
+    return (buttonMask & 2) !== 0;
+  }
+
   function getRockerActionForButton(buttonCode) {
     if (buttonCode === 0) return settings.rockerMiddleLeftAction;
     if (buttonCode === 2) return settings.rockerMiddleRightAction;
     return "none";
   }
 
+  function getLrRockerActionForButton(buttonCode) {
+    if (buttonCode === 0) return settings.rockerLrLeftAction;
+    if (buttonCode === 2) return settings.rockerLrRightAction;
+    return "none";
+  }
+
   function isRockerMouseDown(event) {
     if (event.button !== 0 && event.button !== 2) return false;
     return isMiddleButtonPressed(event.buttons);
+  }
+
+  function isLrRockerMouseDown(event) {
+    if (event.button !== 0 && event.button !== 2) return false;
+    if (event.button === 0) return isRightButtonPressed(event.buttons);
+    if (event.button === 2) return isLeftButtonPressed(event.buttons);
+    return false;
+  }
+
+  function tryFireRockerMouseDown(event) {
+    let action = "none";
+    let rockerLabel = "";
+    if (isRockerMouseDown(event)) {
+      action = getRockerActionForButton(event.button);
+      rockerLabel = "Middle";
+    } else if (isLrRockerMouseDown(event)) {
+      action = getLrRockerActionForButton(event.button);
+      rockerLabel = "L/R";
+    }
+    if (action === "none" || !rockerLabel) return false;
+    if (tracking) cancelGesture();
+    suppressPointerEventsAfterRocker();
+    setSuppressFollowingContextMenu();
+    event.preventDefault();
+    event.stopPropagation();
+    appendDebugLog(
+      `${rockerLabel} rocker action fired: ${event.button === 0 ? "left" : "right"} -> ${action}`,
+    );
+    sendGestureAction(action);
+    return true;
   }
 
   function getRockerActionForWheelDelta(deltaX) {
@@ -515,7 +559,7 @@ let gestureCurveScaleLen = 0;
     await requestTabZoomFromBackground();
     refreshOverlaysForZoom();
     appendDebugLog(
-      `Settings loaded: minSegmentPx=${settings.minSegmentPx}, inaccuracy=${settings.inaccuracyDegrees}°, trainingMode=${settings.trainingMode}, trigger=${settings.triggerMouseButton}, rockerLeft=${settings.rockerMiddleLeftAction}, rockerRight=${settings.rockerMiddleRightAction}`,
+      `Settings loaded: minSegmentPx=${settings.minSegmentPx}, inaccuracy=${settings.inaccuracyDegrees}°, trainingMode=${settings.trainingMode}, trigger=${settings.triggerMouseButton}, rockerLeft=${settings.rockerMiddleLeftAction}, rockerRight=${settings.rockerMiddleRightAction}, lrRockerLeft=${settings.rockerLrLeftAction}, lrRockerRight=${settings.rockerLrRightAction}`,
     );
   }
 
@@ -1520,21 +1564,7 @@ let gestureCurveScaleLen = 0;
   }
 
   function onMouseDown(event) {
-    if (isRockerMouseDown(event)) {
-      const action = getRockerActionForButton(event.button);
-      if (action !== "none") {
-        if (tracking) cancelGesture();
-        suppressPointerEventsAfterRocker();
-        setSuppressFollowingContextMenu();
-        event.preventDefault();
-        event.stopPropagation();
-        appendDebugLog(
-          `Middle rocker action fired: ${event.button === 0 ? "left" : "right"} -> ${action}`,
-        );
-        sendGestureAction(action);
-        return;
-      }
-    }
+    if (tryFireRockerMouseDown(event)) return;
 
     if (!isMatchingMouseButton(event.button)) return;
     if (!isModifierSatisfied(event)) {
@@ -1624,7 +1654,7 @@ let gestureCurveScaleLen = 0;
   function onContextMenu(event) {
     if (shouldSuppressPointerAfterRocker()) {
       event.preventDefault();
-      appendDebugLog("Context menu suppressed after middle rocker.");
+      appendDebugLog("Context menu suppressed after rocker.");
       return;
     }
 
@@ -1647,14 +1677,14 @@ let gestureCurveScaleLen = 0;
     if (!shouldSuppressPointerAfterRocker()) return;
     event.preventDefault();
     event.stopPropagation();
-    appendDebugLog("Click suppressed after middle rocker.");
+    appendDebugLog("Click suppressed after rocker.");
   }
 
   function onAuxClick(event) {
     if (!shouldSuppressPointerAfterRocker()) return;
     event.preventDefault();
     event.stopPropagation();
-    appendDebugLog("Aux click suppressed after middle rocker.");
+    appendDebugLog("Aux click suppressed after rocker.");
   }
 
   function onWheel(event) {
@@ -1752,7 +1782,7 @@ let gestureCurveScaleLen = 0;
     const xy = clientCoordsInTopViewport(event.clientX, event.clientY);
     if (!xy) return;
 
-    if (isRockerMouseDown(event)) {
+    if (isRockerMouseDown(event) || isLrRockerMouseDown(event)) {
       suppressPointerEventsAfterRocker();
       event.preventDefault();
       event.stopPropagation();

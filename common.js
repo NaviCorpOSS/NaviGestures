@@ -60,6 +60,8 @@
     triggerModifier: "unset",
     rockerMiddleLeftAction: "back",
     rockerMiddleRightAction: "forward",
+    rockerLrLeftAction: "back",
+    rockerLrRightAction: "forward",
     showDebugLogWindow: false,
     trainingMode: false,
   };
@@ -616,6 +618,16 @@
         base.rockerMiddleRightAction,
         ROCKER_ASSIGNABLE_ACTIONS,
         DEFAULT_SETTINGS.rockerMiddleRightAction,
+      ),
+      rockerLrLeftAction: normalizeChoice(
+        base.rockerLrLeftAction,
+        ROCKER_ASSIGNABLE_ACTIONS,
+        DEFAULT_SETTINGS.rockerLrLeftAction,
+      ),
+      rockerLrRightAction: normalizeChoice(
+        base.rockerLrRightAction,
+        ROCKER_ASSIGNABLE_ACTIONS,
+        DEFAULT_SETTINGS.rockerLrRightAction,
       ),
       showDebugLogWindow: normalizeBoolean(
         base.showDebugLogWindow,

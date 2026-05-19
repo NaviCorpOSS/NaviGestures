@@ -19,6 +19,8 @@
   const rockerMiddleRightActionInput = document.getElementById(
     "rockerMiddleRightAction",
   );
+  const rockerLrLeftActionInput = document.getElementById("rockerLrLeftAction");
+  const rockerLrRightActionInput = document.getElementById("rockerLrRightAction");
   const trainingModeInput = document.getElementById("trainingMode");
   const showDebugLogWindowInput = document.getElementById("showDebugLogWindow");
   const resetBtn = document.getElementById("resetBtn");
@@ -357,6 +359,8 @@
     triggerModifierInput.value = settings.triggerModifier;
     rockerMiddleLeftActionInput.value = settings.rockerMiddleLeftAction;
     rockerMiddleRightActionInput.value = settings.rockerMiddleRightAction;
+    rockerLrLeftActionInput.value = settings.rockerLrLeftAction;
+    rockerLrRightActionInput.value = settings.rockerLrRightAction;
     trainingModeInput.checked = !!settings.trainingMode;
     showDebugLogWindowInput.checked = !!settings.showDebugLogWindow;
   }
@@ -389,6 +393,8 @@
       triggerModifier: triggerModifierInput.value,
       rockerMiddleLeftAction: rockerMiddleLeftActionInput.value,
       rockerMiddleRightAction: rockerMiddleRightActionInput.value,
+      rockerLrLeftAction: rockerLrLeftActionInput.value,
+      rockerLrRightAction: rockerLrRightActionInput.value,
       trainingMode: trainingModeInput.checked,
       showDebugLogWindow: showDebugLogWindowInput.checked,
     });
@@ -569,5 +575,7 @@
   buildGestureRows();
   buildRockerActionOptions(rockerMiddleLeftActionInput);
   buildRockerActionOptions(rockerMiddleRightActionInput);
+  buildRockerActionOptions(rockerLrLeftActionInput);
+  buildRockerActionOptions(rockerLrRightActionInput);
   loadAndRender();
 })();
