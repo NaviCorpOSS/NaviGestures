@@ -3,6 +3,7 @@
   const ACTIONS = [
     "reload",
     "closeTab",
+    "reopenClosedTab",
     "forward",
     "back",
     "newTab",
@@ -22,6 +23,7 @@
     none: "Do nothing",
     reload: "Reload page",
     closeTab: "Close tab",
+    reopenClosedTab: "Reopen closed tab",
     forward: "Go forward",
     back: "Go back",
     newTab: "Open new tab",
@@ -39,6 +41,7 @@
     gestures: {
       reload: ["D", "U"],
       closeTab: ["D", "R"],
+      reopenClosedTab: [],
       forward: ["R"],
       back: ["L"],
       newTab: ["UR"],

@@ -145,6 +145,54 @@
     await updateWindow(windowId, { state: nextState });
   }
 
+  function getRecentlyClosed(query) {
+    if (!api.sessions || typeof api.sessions.getRecentlyClosed !== "function") {
+      return Promise.resolve([]);
+    }
+    if (isBrowserApi) {
+      return api.sessions.getRecentlyClosed(query).catch(() => []);
+    }
+    return new Promise((resolve) => {
+      try {
+        api.sessions.getRecentlyClosed(query, (sessions) => {
+          const err = api.runtime && api.runtime.lastError;
+          resolve(err ? [] : sessions || []);
+        });
+      } catch (_) {
+        resolve([]);
+      }
+    });
+  }
+
+  function restoreClosedSession(sessionId) {
+    if (!api.sessions || typeof api.sessions.restore !== "function") {
+      return Promise.resolve();
+    }
+    if (isBrowserApi) {
+      return api.sessions.restore(sessionId).catch(() => {});
+    }
+    return new Promise((resolve) => {
+      try {
+        api.sessions.restore(sessionId, () => resolve());
+      } catch (_) {
+        resolve();
+      }
+    });
+  }
+
+  async function reopenClosedTab() {
+    const closed = await getRecentlyClosed({ maxResults: 1 });
+    if (!closed.length) return;
+    const entry = closed[0];
+    const sessionId = entry.tab
+      ? entry.tab.sessionId
+      : entry.window
+        ? entry.window.sessionId
+        : null;
+    if (sessionId == null) return;
+    await restoreClosedSession(sessionId);
+  }
+
   async function toggleWindowMaximized(windowId) {
     if (!windowId) return;
     const currentWindow = await getWindow(windowId);
@@ -155,7 +203,7 @@
   async function performAction(action, senderTab) {
     const senderTabId = senderTab ? senderTab.id : null;
     const senderWindowId = senderTab ? senderTab.windowId : null;
-    if (!senderTabId && action !== "newTab") return;
+    if (!senderTabId && action !== "newTab" && action !== "reopenClosedTab") return;
 
     try {
       switch (action) {
@@ -164,6 +212,9 @@
           break;
         case "closeTab":
           await runTabAction("remove", senderTabId);
+          break;
+        case "reopenClosedTab":
+          await reopenClosedTab();
           break;
         case "forward":
           await runTabAction("goForward", senderTabId);
