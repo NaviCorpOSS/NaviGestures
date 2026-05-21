@@ -1035,7 +1035,7 @@ let gestureCurveScaleLen = 0;
     trailCanvas.style.width = "100vw";
     trailCanvas.style.height = "100vh";
     trailCanvas.style.pointerEvents = "none";
-    trailCanvas.style.zIndex = "2147483647";
+    trailCanvas.style.zIndex = "2147483645";
 
     trailCtx = trailCanvas.getContext("2d");
     resizeTrailCanvas();
@@ -1429,7 +1429,7 @@ let gestureCurveScaleLen = 0;
     host.setAttribute("data-navigestures-ui", "gesture-hint");
     host.setAttribute("aria-live", "polite");
     host.style.cssText =
-      "position:fixed;z-index:2147483646;pointer-events:none;visibility:hidden;display:block;";
+      "position:fixed;z-index:2147483647;pointer-events:none;visibility:hidden;display:block;";
     const shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = `
