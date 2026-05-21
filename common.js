@@ -60,6 +60,9 @@
     trailColor: "#24a1ff",
     trailOpacity: 100,
     trailWidth: 3,
+    trailBorderColor: "#0b3d66",
+    trailBorderOpacity: 100,
+    trailBorderWidth: 1,
     hintBackgroundColor: "#080a12",
     hintBackgroundOpacity: 90,
     hintBorderColor: "#c8e6ff",
@@ -627,6 +630,20 @@
         1,
         16,
         DEFAULT_SETTINGS.trailWidth,
+      ),
+      trailBorderColor: normalizeHexColor(
+        base.trailBorderColor,
+        DEFAULT_SETTINGS.trailBorderColor,
+      ),
+      trailBorderOpacity: normalizeOpacityPercent(
+        base.trailBorderOpacity,
+        DEFAULT_SETTINGS.trailBorderOpacity,
+      ),
+      trailBorderWidth: clampNumber(
+        base.trailBorderWidth,
+        0,
+        8,
+        DEFAULT_SETTINGS.trailBorderWidth,
       ),
       hintBackgroundColor: normalizeHexColor(
         base.hintBackgroundColor,

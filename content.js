@@ -1095,33 +1095,61 @@ let gestureCurveScaleLen = 0;
     );
   }
 
+  function trailBorderColorRgba() {
+    return common.rgbaFromHexAndOpacity(
+      settings.trailBorderColor,
+      settings.trailBorderOpacity,
+    );
+  }
+
+  function trailLineWidthsPx() {
+    const zoom = gestureOverlayZoomBoost();
+    const inner = settings.trailWidth * trailPixelRatio * zoom;
+    const borderSide =
+      Math.max(0, settings.trailBorderWidth) * trailPixelRatio * zoom;
+    return { inner, borderSide };
+  }
+
   function applyTrailStyle() {
     if (!trailCtx) return;
-    const lineW =
-      settings.trailWidth * trailPixelRatio * gestureOverlayZoomBoost();
-    const stroke = trailColorRgba();
-    trailCtx.lineWidth = lineW;
     trailCtx.lineCap = "round";
     trailCtx.lineJoin = "round";
-    trailCtx.strokeStyle = stroke;
-    trailCtx.shadowColor = stroke;
-    trailCtx.shadowBlur = Math.max(0.5, lineW * 0.55);
     trailCtx.shadowOffsetX = 0;
     trailCtx.shadowOffsetY = 0;
   }
 
-  function trailStrokeStyle(color) {
-    if (!trailCtx) return;
-    const lineW =
-      settings.trailWidth * trailPixelRatio * gestureOverlayZoomBoost();
-    trailCtx.lineWidth = lineW;
-    trailCtx.lineCap = "round";
-    trailCtx.lineJoin = "round";
-    trailCtx.strokeStyle = color;
-    trailCtx.shadowColor = color;
-    trailCtx.shadowBlur = Math.max(0.5, lineW * 0.55);
-    trailCtx.shadowOffsetX = 0;
-    trailCtx.shadowOffsetY = 0;
+  function appendTrailPathToContext(ctx, pts) {
+    const pr = trailPixelRatio;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x * pr, pts[0].y * pr);
+    for (let i = 1; i < pts.length; i += 1) {
+      ctx.lineTo(pts[i].x * pr, pts[i].y * pr);
+    }
+  }
+
+  function strokeTrailPath(pts) {
+    if (!trailCtx || !pts || pts.length < 2) return;
+    const { inner, borderSide } = trailLineWidthsPx();
+    applyTrailStyle();
+
+    if (borderSide > 0) {
+      appendTrailPathToContext(trailCtx, pts);
+      const borderStroke = trailBorderColorRgba();
+      const outerW = inner + borderSide * 2;
+      trailCtx.lineWidth = outerW;
+      trailCtx.strokeStyle = borderStroke;
+      trailCtx.shadowColor = borderStroke;
+      trailCtx.shadowBlur = Math.max(0.5, outerW * 0.55);
+      trailCtx.stroke();
+    }
+
+    appendTrailPathToContext(trailCtx, pts);
+    const fillStroke = trailColorRgba();
+    trailCtx.lineWidth = inner;
+    trailCtx.strokeStyle = fillStroke;
+    trailCtx.shadowColor = fillStroke;
+    trailCtx.shadowBlur = Math.max(0.5, inner * 0.55);
+    trailCtx.stroke();
   }
 
   function drawCenterline(points, color, widthPx, maxLen) {
@@ -1227,13 +1255,7 @@ let gestureCurveScaleLen = 0;
     const pts = decimatedTrailDrawPoints();
     if (pts.length < 2) return;
     trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
-    trailStrokeStyle(trailColorRgba());
-    trailCtx.beginPath();
-    trailCtx.moveTo(pts[0].x * trailPixelRatio, pts[0].y * trailPixelRatio);
-    for (let i = 1; i < pts.length; i += 1) {
-      trailCtx.lineTo(pts[i].x * trailPixelRatio, pts[i].y * trailPixelRatio);
-    }
-    trailCtx.stroke();
+    strokeTrailPath(pts);
     trailLastPoint = pts[pts.length - 1];
   }
 

@@ -13,6 +13,17 @@
   const trailOpacityInput = document.getElementById("trailOpacity");
   const trailOpacityValueEl = document.getElementById("trailOpacityValue");
   const trailWidthInput = document.getElementById("trailWidth");
+  const trailBorderColorPickerInput = document.getElementById(
+    "trailBorderColorPicker",
+  );
+  const trailBorderColorHexInput = document.getElementById(
+    "trailBorderColorHex",
+  );
+  const trailBorderOpacityInput = document.getElementById("trailBorderOpacity");
+  const trailBorderOpacityValueEl = document.getElementById(
+    "trailBorderOpacityValue",
+  );
+  const trailBorderWidthInput = document.getElementById("trailBorderWidth");
   const hintBackgroundPickerInput = document.getElementById(
     "hintBackgroundPicker",
   );
@@ -468,6 +479,17 @@
     );
     trailWidthInput.value = String(settings.trailWidth);
     syncColorWithOpacityInputs(
+      trailBorderColorPickerInput,
+      trailBorderColorHexInput,
+      trailBorderOpacityInput,
+      trailBorderOpacityValueEl,
+      settings.trailBorderColor,
+      settings.trailBorderOpacity,
+      common.DEFAULT_SETTINGS.trailBorderColor,
+      common.DEFAULT_SETTINGS.trailBorderOpacity,
+    );
+    trailBorderWidthInput.value = String(settings.trailBorderWidth);
+    syncColorWithOpacityInputs(
       hintBackgroundPickerInput,
       hintBackgroundHexInput,
       hintBackgroundOpacityInput,
@@ -532,6 +554,9 @@
       trailColor: trailColorHexInput.value,
       trailOpacity: trailOpacityInput.value,
       trailWidth: trailWidthInput.value,
+      trailBorderColor: trailBorderColorHexInput.value,
+      trailBorderOpacity: trailBorderOpacityInput.value,
+      trailBorderWidth: trailBorderWidthInput.value,
       hintBackgroundColor: hintBackgroundHexInput.value,
       hintBackgroundOpacity: hintBackgroundOpacityInput.value,
       hintBorderColor: hintBorderHexInput.value,
@@ -586,6 +611,14 @@
     trailOpacityValueEl,
     common.DEFAULT_SETTINGS.trailColor,
     common.DEFAULT_SETTINGS.trailOpacity,
+  );
+  bindColorWithOpacityInputs(
+    trailBorderColorPickerInput,
+    trailBorderColorHexInput,
+    trailBorderOpacityInput,
+    trailBorderOpacityValueEl,
+    common.DEFAULT_SETTINGS.trailBorderColor,
+    common.DEFAULT_SETTINGS.trailBorderOpacity,
   );
   bindColorWithOpacityInputs(
     hintBackgroundPickerInput,

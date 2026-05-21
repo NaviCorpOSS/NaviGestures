@@ -504,6 +504,48 @@
                 </div>
 
                 <div class="row">
+                    <label for="trailBorderColorHex">Trail border</label>
+                    <div class="color-inputs-with-opacity">
+                        <input id="trailBorderColorPicker" type="color" />
+                        <input
+                            id="trailBorderColorHex"
+                            type="text"
+                            placeholder="#0b3d66"
+                        />
+                        <div class="opacity-control">
+                            <label for="trailBorderOpacity">Opacity</label>
+                            <input
+                                id="trailBorderOpacity"
+                                type="range"
+                                min="0"
+                                max="100"
+                                step="1"
+                            />
+                            <output
+                                id="trailBorderOpacityValue"
+                                class="opacity-value"
+                                for="trailBorderOpacity"
+                                >100%</output
+                            >
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <label for="trailBorderWidth"
+                        >Trail border width (px)</label
+                    >
+                    <input
+                        id="trailBorderWidth"
+                        type="number"
+                        min="0"
+                        max="8"
+                        step="1"
+                        title="0 disables the trail outline"
+                    />
+                </div>
+
+                <div class="row">
                     <label for="hintBackgroundHex">Hint background</label>
                     <div class="color-inputs-with-opacity">
                         <input id="hintBackgroundPicker" type="color" />
