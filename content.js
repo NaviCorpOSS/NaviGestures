@@ -3,6 +3,8 @@
   const isBrowserApi = typeof browser !== "undefined";
   const common = globalThis.NaviGesturesCommon;
   const STATIONARY_CLICK_PX = 4;
+  /** Minimum drag from press origin before pipe matching and training overlays start. */
+  const GESTURE_ACTIVATION_DRAG_PX = 8;
   const RIGHT_MENU_DOUBLECLICK_MS = 350;
   const ROCKER_SUPPRESS_CLICK_MS = 500;
   const ROCKER_WHEEL_COOLDOWN_MS = 180;
@@ -20,6 +22,8 @@
   const MODIFIED_RIGHT_CONTEXT_SUPPRESS_MS = 2500;
   let settings = common.sanitizeSettings(common.DEFAULT_SETTINGS);
   let tracking = false;
+  /** Press origin while waiting for activation drag; cleared when tracking starts. */
+  let pendingGesturePress = null;
   let path = [];
   let anchorPoint = null;
   let totalDistance = 0;
@@ -403,10 +407,51 @@ let gestureCurveScaleLen = 0;
     );
   }
 
+  function clearPendingGesturePress() {
+    pendingGesturePress = null;
+  }
+
+  function armGesturePress(clientX, clientY) {
+    pendingGesturePress = { clientX, clientY };
+    appendDebugLog(
+      `Gesture press armed at (${Math.round(clientX)}, ${Math.round(clientY)}); waiting for ${GESTURE_ACTIVATION_DRAG_PX}px drag.`,
+    );
+  }
+
+  function getPendingGestureDragDistance(clientX, clientY) {
+    if (!pendingGesturePress) return 0;
+    const dx = clientX - pendingGesturePress.clientX;
+    const dy = clientY - pendingGesturePress.clientY;
+    return Math.hypot(dx, dy);
+  }
+
+  function maybeActivateGestureTracking(clientX, clientY) {
+    if (tracking || !pendingGesturePress) return false;
+    if (getPendingGestureDragDistance(clientX, clientY) < GESTURE_ACTIVATION_DRAG_PX) {
+      return false;
+    }
+    const startX = pendingGesturePress.clientX;
+    const startY = pendingGesturePress.clientY;
+    clearPendingGesturePress();
+    beginGestureTracking(startX, startY);
+    return true;
+  }
+
+  function clearRightClickPressSuppression() {
+    rightGestureButtonDown = false;
+    suppressNextContextMenu = false;
+    clearPendingGesturePress();
+    if (rightGestureButtonDownReleaseTimer != null) {
+      clearTimeout(rightGestureButtonDownReleaseTimer);
+      rightGestureButtonDownReleaseTimer = null;
+    }
+  }
+
   function clearModifiedRightGestureSuppressionState() {
     modifiedRightContextSuppressUntil = 0;
     suppressNextContextMenu = false;
     rightGestureButtonDown = false;
+    clearPendingGesturePress();
     if (rightGestureButtonDownReleaseTimer != null) {
       clearTimeout(rightGestureButtonDownReleaseTimer);
       rightGestureButtonDownReleaseTimer = null;
@@ -1618,6 +1663,7 @@ let gestureCurveScaleLen = 0;
 
   function cancelGesture() {
     blockGestureUntilRelease = false;
+    clearPendingGesturePress();
     if (clearTrailTimer) {
       clearTimeout(clearTrailTimer);
       clearTrailTimer = null;
@@ -1759,6 +1805,7 @@ let gestureCurveScaleLen = 0;
         // Second stationary right click: let native context menu flow.
         lastRightStationaryClickAt = 0;
         blockGestureUntilRelease = true;
+        clearRightClickPressSuppression();
         appendDebugLog(
           "Right-click bypass: second stationary click opens native context menu.",
         );
@@ -1780,10 +1827,21 @@ let gestureCurveScaleLen = 0;
       event.preventDefault();
     }
 
-    beginGestureTracking(event.clientX, event.clientY);
+    armGesturePress(event.clientX, event.clientY);
   }
 
   function onMouseMove(event) {
+    if (!tracking && pendingGesturePress) {
+      if ((event.buttons & getConfiguredMouseButtonMask()) === 0) {
+        clearPendingGesturePress();
+        return;
+      }
+      if (maybeActivateGestureTracking(event.clientX, event.clientY)) {
+        ingestGesturePointerSample(event.clientX, event.clientY);
+      }
+      return;
+    }
+
     if (!tracking || !anchorPoint) return;
 
     if ((event.buttons & getConfiguredMouseButtonMask()) === 0) {
@@ -1801,6 +1859,7 @@ let gestureCurveScaleLen = 0;
   function onMouseUp(event) {
     if (blockGestureUntilRelease && isMatchingMouseButton(event.button)) {
       blockGestureUntilRelease = false;
+      clearRightClickPressSuppression();
       return;
     }
 
@@ -1814,7 +1873,26 @@ let gestureCurveScaleLen = 0;
       event.stopPropagation();
     }
 
+    if (!tracking && pendingGesturePress) {
+      maybeActivateGestureTracking(event.clientX, event.clientY);
+    }
+
     if (!tracking) {
+      if (pendingGesturePress) {
+        if (
+          settings.triggerMouseButton === "right" &&
+          !requiresGestureModifier() &&
+          isMatchingMouseButton(event.button)
+        ) {
+          // Release without reaching activation drag always counts as stationary
+          // for the double–right-click context menu bypass.
+          lastRightStationaryClickAt = Date.now();
+          appendDebugLog(
+            "Stationary right click detected (possible context-menu double-click sequence).",
+          );
+        }
+        clearPendingGesturePress();
+      }
       if (endingRightGesturePress) finishModifiedRightGesturePress(event);
       return;
     }
