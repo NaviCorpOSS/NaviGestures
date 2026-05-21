@@ -157,6 +157,41 @@
                 align-items: center;
             }
 
+            .color-inputs-with-opacity {
+                display: grid;
+                grid-template-columns: 46px 1fr;
+                gap: 8px;
+                align-items: center;
+            }
+
+            .color-inputs-with-opacity .opacity-control {
+                grid-column: 1 / -1;
+                display: grid;
+                grid-template-columns: auto 1fr 3.25rem;
+                gap: 8px 10px;
+                align-items: center;
+            }
+
+            .color-inputs-with-opacity .opacity-control label {
+                font-size: 0.78rem;
+                color: var(--muted);
+                white-space: nowrap;
+            }
+
+            .color-inputs-with-opacity .opacity-control input[type="range"] {
+                width: 100%;
+                min-width: 0;
+                accent-color: var(--cyan);
+                cursor: pointer;
+            }
+
+            .color-inputs-with-opacity .opacity-value {
+                font-size: 0.78rem;
+                color: var(--text);
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+            }
+
             input[type="color"] {
                 width: 46px;
                 height: 40px;
@@ -431,13 +466,29 @@
 
                 <div class="row">
                     <label for="trailColorHex">Trail color</label>
-                    <div class="color-inputs">
+                    <div class="color-inputs-with-opacity">
                         <input id="trailColorPicker" type="color" />
                         <input
                             id="trailColorHex"
                             type="text"
                             placeholder="#24a1ff"
                         />
+                        <div class="opacity-control">
+                            <label for="trailOpacity">Opacity</label>
+                            <input
+                                id="trailOpacity"
+                                type="range"
+                                min="0"
+                                max="100"
+                                step="1"
+                            />
+                            <output
+                                id="trailOpacityValue"
+                                class="opacity-value"
+                                for="trailOpacity"
+                                >100%</output
+                            >
+                        </div>
                     </div>
                 </div>
 
@@ -450,6 +501,94 @@
                         max="16"
                         step="1"
                     />
+                </div>
+
+                <div class="row">
+                    <label for="hintBackgroundHex">Hint background</label>
+                    <div class="color-inputs-with-opacity">
+                        <input id="hintBackgroundPicker" type="color" />
+                        <input
+                            id="hintBackgroundHex"
+                            type="text"
+                            placeholder="#080a12"
+                        />
+                        <div class="opacity-control">
+                            <label for="hintBackgroundOpacity">Opacity</label>
+                            <input
+                                id="hintBackgroundOpacity"
+                                type="range"
+                                min="0"
+                                max="100"
+                                step="1"
+                            />
+                            <output
+                                id="hintBackgroundOpacityValue"
+                                class="opacity-value"
+                                for="hintBackgroundOpacity"
+                                >90%</output
+                            >
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <label for="hintBorderHex">Hint border</label>
+                    <div class="color-inputs-with-opacity">
+                        <input id="hintBorderPicker" type="color" />
+                        <input
+                            id="hintBorderHex"
+                            type="text"
+                            placeholder="#c8e6ff"
+                        />
+                        <div class="opacity-control">
+                            <label for="hintBorderOpacity">Opacity</label>
+                            <input
+                                id="hintBorderOpacity"
+                                type="range"
+                                min="0"
+                                max="100"
+                                step="1"
+                            />
+                            <output
+                                id="hintBorderOpacityValue"
+                                class="opacity-value"
+                                for="hintBorderOpacity"
+                                >38%</output
+                            >
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <label for="hintBorderMatchedHex"
+                        >Hint border (matched)</label
+                    >
+                    <div class="color-inputs-with-opacity">
+                        <input id="hintBorderMatchedPicker" type="color" />
+                        <input
+                            id="hintBorderMatchedHex"
+                            type="text"
+                            placeholder="#5ce07c"
+                        />
+                        <div class="opacity-control">
+                            <label for="hintBorderMatchedOpacity"
+                                >Opacity</label
+                            >
+                            <input
+                                id="hintBorderMatchedOpacity"
+                                type="range"
+                                min="0"
+                                max="100"
+                                step="1"
+                            />
+                            <output
+                                id="hintBorderMatchedOpacityValue"
+                                class="opacity-value"
+                                for="hintBorderMatchedOpacity"
+                                >80%</output
+                            >
+                        </div>
+                    </div>
                 </div>
 
                 <div class="row">

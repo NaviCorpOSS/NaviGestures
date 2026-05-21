@@ -16,8 +16,6 @@
   const DEBUG_PANEL_WIDTH_PX = 380;
   const DEBUG_PANEL_MAX_HEIGHT_PX = 400;
   const GESTURE_HINT_MAX_WIDTH_PX = 280;
-  const HINT_BORDER_DEFAULT = "rgba(200, 230, 255, 0.38)";
-  const HINT_BORDER_MATCHED = "rgba(92, 224, 124, 0.8)";
   /** Grace window after modified right-click gestures; catches mouseup-deferred Linux menus. */
   const MODIFIED_RIGHT_CONTEXT_SUPPRESS_MS = 2500;
   let settings = common.sanitizeSettings(common.DEFAULT_SETTINGS);
@@ -60,6 +58,7 @@ let gestureCurveScaleLen = 0;
   let gestureHintEl = null;
   /** Inner node inside shadow root (text + border); host handles position and zoom scale. */
   let gestureHintPillEl = null;
+  let gestureHintStyleEl = null;
   let strokePoints = [];
   let gesturePoints = [];
   let gestureZoomFactor = 1;
@@ -750,6 +749,7 @@ let gestureCurveScaleLen = 0;
       data.settings || common.DEFAULT_SETTINGS,
     );
     applyTrailStyle();
+    applyGestureHintStyle();
     syncDebugPanelVisibility();
     await requestTabZoomFromBackground();
     refreshOverlaysForZoom();
@@ -1088,15 +1088,23 @@ let gestureCurveScaleLen = 0;
     };
   }
 
+  function trailColorRgba() {
+    return common.rgbaFromHexAndOpacity(
+      settings.trailColor,
+      settings.trailOpacity,
+    );
+  }
+
   function applyTrailStyle() {
     if (!trailCtx) return;
     const lineW =
       settings.trailWidth * trailPixelRatio * gestureOverlayZoomBoost();
+    const stroke = trailColorRgba();
     trailCtx.lineWidth = lineW;
     trailCtx.lineCap = "round";
     trailCtx.lineJoin = "round";
-    trailCtx.strokeStyle = settings.trailColor;
-    trailCtx.shadowColor = settings.trailColor;
+    trailCtx.strokeStyle = stroke;
+    trailCtx.shadowColor = stroke;
     trailCtx.shadowBlur = Math.max(0.5, lineW * 0.55);
     trailCtx.shadowOffsetX = 0;
     trailCtx.shadowOffsetY = 0;
@@ -1195,12 +1203,32 @@ let gestureCurveScaleLen = 0;
     }
   }
 
+  /** Drop samples closer than this (CSS px) so joins stay sparse and redraw stays cheap. */
+  const TRAIL_SAMPLE_MIN_PX = 0.6;
+
+  function decimatedTrailDrawPoints() {
+    if (!strokePoints || strokePoints.length < 2) return [];
+    const out = [strokePoints[0]];
+    for (let i = 1; i < strokePoints.length; i += 1) {
+      const p = strokePoints[i];
+      const last = out[out.length - 1];
+      if (Math.hypot(p.x - last.x, p.y - last.y) >= TRAIL_SAMPLE_MIN_PX) {
+        out.push(p);
+      }
+    }
+    const end = strokePoints[strokePoints.length - 1];
+    const tail = out[out.length - 1];
+    if (tail.x !== end.x || tail.y !== end.y) out.push(end);
+    return out.map((p) => toTrailPoint(p.x, p.y));
+  }
+
   function redrawTrailSegmented() {
     if (!trailCtx || strokePoints.length < 2) return;
+    const pts = decimatedTrailDrawPoints();
+    if (pts.length < 2) return;
     trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
-    trailStrokeStyle(settings.trailColor);
+    trailStrokeStyle(trailColorRgba());
     trailCtx.beginPath();
-    const pts = strokePoints.map((p) => toTrailPoint(p.x, p.y));
     trailCtx.moveTo(pts[0].x * trailPixelRatio, pts[0].y * trailPixelRatio);
     for (let i = 1; i < pts.length; i += 1) {
       trailCtx.lineTo(pts[i].x * trailPixelRatio, pts[i].y * trailPixelRatio);
@@ -1234,18 +1262,13 @@ let gestureCurveScaleLen = 0;
       clearTrailTimer = null;
     }
     clearTrail();
-    trailCtx.beginPath();
-    trailCtx.moveTo(x * trailPixelRatio, y * trailPixelRatio);
     trailLastPoint = { x, y };
   }
 
-  function extendTrail(x, y) {
-    if (!trailCtx || !trailLastPoint) return;
-    const dist = Math.hypot(x - trailLastPoint.x, y - trailLastPoint.y);
-    if (dist < 0.6) return;
-    trailCtx.lineTo(x * trailPixelRatio, y * trailPixelRatio);
-    trailCtx.stroke();
-    trailLastPoint = { x, y };
+  /** One full-path stroke per update so semi-transparent color does not stack at joints. */
+  function refreshTrailFromStroke() {
+    if (!trailCtx) return;
+    redrawTrailSegmented();
   }
 
   function updateDebugCandidatesBar() {
@@ -1421,6 +1444,53 @@ let gestureCurveScaleLen = 0;
     vv.addEventListener("scroll", overlayViewportListener);
   }
 
+  function gestureHintBorderDefaultRgba() {
+    return common.rgbaFromHexAndOpacity(
+      settings.hintBorderColor,
+      settings.hintBorderOpacity,
+    );
+  }
+
+  function gestureHintBorderMatchedRgba() {
+    return common.rgbaFromHexAndOpacity(
+      settings.hintBorderMatchedColor,
+      settings.hintBorderMatchedOpacity,
+    );
+  }
+
+  function buildGestureHintStyleCss() {
+    const background = common.rgbaFromHexAndOpacity(
+      settings.hintBackgroundColor,
+      settings.hintBackgroundOpacity,
+    );
+    const borderDefault = gestureHintBorderDefaultRgba();
+    return `
+      *, *::before, *::after { box-sizing: border-box; }
+      .ng-gesture-hint-pill {
+        max-width: ${GESTURE_HINT_MAX_WIDTH_PX}px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        font: 600 13px/1.25 system-ui, -apple-system, "Segoe UI", "Roboto", "Helvetica Neue", sans-serif;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #f0f8ff;
+        background: ${background};
+        border: 1px solid ${borderDefault};
+        box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
+        text-shadow:
+          0 0 8px rgba(0, 0, 0, 0.9),
+          0 1px 2px rgba(0, 0, 0, 0.95),
+          1px 0 2px rgba(0, 0, 0, 0.85),
+          -1px 0 2px rgba(0, 0, 0, 0.85);
+      }
+    `;
+  }
+
+  function applyGestureHintStyle() {
+    if (!gestureHintStyleEl) return;
+    gestureHintStyleEl.textContent = buildGestureHintStyleCss();
+  }
+
   function ensureGestureHint() {
     if (gestureHintEl || !document.documentElement) return;
     const uid = randomNaviGesturesUiSuffix();
@@ -1432,26 +1502,8 @@ let gestureCurveScaleLen = 0;
       "position:fixed;z-index:2147483647;pointer-events:none;visibility:hidden;display:block;";
     const shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = `
-      *, *::before, *::after { box-sizing: border-box; }
-      .ng-gesture-hint-pill {
-        max-width: ${GESTURE_HINT_MAX_WIDTH_PX}px;
-        padding: 6px 12px;
-        border-radius: 999px;
-        font: 600 13px/1.25 system-ui, -apple-system, "Segoe UI", "Roboto", "Helvetica Neue", sans-serif;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: #f0f8ff;
-        background: rgba(8, 10, 18, 0.9);
-        border: 1px solid rgba(200, 230, 255, 0.38);
-        box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
-        text-shadow:
-          0 0 8px rgba(0, 0, 0, 0.9),
-          0 1px 2px rgba(0, 0, 0, 0.95),
-          1px 0 2px rgba(0, 0, 0, 0.85),
-          -1px 0 2px rgba(0, 0, 0, 0.85);
-      }
-    `;
+    gestureHintStyleEl = style;
+    applyGestureHintStyle();
     shadow.appendChild(style);
     const pill = document.createElement("div");
     pill.className = "ng-gesture-hint-pill";
@@ -1468,6 +1520,7 @@ let gestureCurveScaleLen = 0;
     }
     gestureHintEl = null;
     gestureHintPillEl = null;
+    gestureHintStyleEl = null;
   }
 
   function pathIsPrefixOfGestureTokens(path, tokens) {
@@ -1508,7 +1561,8 @@ let gestureCurveScaleLen = 0;
 
     const surviving = common.survivingPipeActions(pipeState);
     let hintText = "";
-    let borderColor = HINT_BORDER_DEFAULT;
+    let borderColor = gestureHintBorderDefaultRgba();
+    let borderMatched = false;
 
     if (surviving.length === 0) {
       gestureHintPillEl.textContent = "";
@@ -1516,7 +1570,8 @@ let gestureCurveScaleLen = 0;
       return;
     } else if (surviving.length === 1) {
       hintText = common.ACTION_LABELS[surviving[0]] || surviving[0];
-      borderColor = HINT_BORDER_MATCHED;
+      borderColor = gestureHintBorderMatchedRgba();
+      borderMatched = true;
     } else {
       const dominant = dominantSurvivingByTokenPrefix(
         surviving,
@@ -1527,13 +1582,15 @@ let gestureCurveScaleLen = 0;
         const label = common.ACTION_LABELS[dominant] || dominant;
         const extra = surviving.length - 1;
         hintText = extra > 0 ? `${label} +${extra}` : label;
-        borderColor = HINT_BORDER_MATCHED;
+        borderColor = gestureHintBorderMatchedRgba();
+        borderMatched = true;
       } else {
         hintText = "Multiple Matches";
       }
     }
 
     gestureHintPillEl.style.borderColor = borderColor;
+    gestureHintPillEl.style.borderWidth = borderMatched ? "2px" : "1px";
     gestureHintPillEl.textContent = hintText;
     gestureHintEl.style.visibility = "visible";
 
@@ -1770,7 +1827,7 @@ let gestureCurveScaleLen = 0;
 
     if (updateVisuals) {
       redrawGesturePipeOverlay();
-      extendTrail(clientX, clientY);
+      refreshTrailFromStroke();
       syncGestureHint(clientX, clientY);
       updateDebugCandidatesBar();
     }
@@ -2002,6 +2059,7 @@ let gestureCurveScaleLen = 0;
     );
     if (!NG_IS_TOP_FRAME) return;
     applyTrailStyle();
+    applyGestureHintStyle();
     syncDebugPanelVisibility();
     refreshOverlaysForZoom();
     requestTabZoomFromBackground();

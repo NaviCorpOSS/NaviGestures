@@ -58,7 +58,14 @@
     pipeWidth: 150,
     inaccuracyDegrees: 50,
     trailColor: "#24a1ff",
+    trailOpacity: 100,
     trailWidth: 3,
+    hintBackgroundColor: "#080a12",
+    hintBackgroundOpacity: 90,
+    hintBorderColor: "#c8e6ff",
+    hintBorderOpacity: 38,
+    hintBorderMatchedColor: "#5ce07c",
+    hintBorderMatchedOpacity: 80,
     triggerMouseButton: "right",
     triggerModifier: "unset",
     rockerMiddleLeftAction: "back",
@@ -382,6 +389,21 @@
     return fallbackColor;
   }
 
+  function normalizeOpacityPercent(input, fallbackPercent) {
+    const n = Number(input);
+    if (!Number.isFinite(n)) return fallbackPercent;
+    return Math.min(100, Math.max(0, Math.round(n)));
+  }
+
+  function rgbaFromHexAndOpacity(hex, opacityPercent) {
+    const color = normalizeHexColor(hex, "#000000");
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+    const alpha = normalizeOpacityPercent(opacityPercent, 100) / 100;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
   function normalizeChoice(value, validChoices, fallbackValue) {
     const normalized = String(value || "")
       .trim()
@@ -596,11 +618,39 @@
         base.trailColor,
         DEFAULT_SETTINGS.trailColor,
       ),
+      trailOpacity: normalizeOpacityPercent(
+        base.trailOpacity,
+        DEFAULT_SETTINGS.trailOpacity,
+      ),
       trailWidth: clampNumber(
         base.trailWidth,
         1,
         16,
         DEFAULT_SETTINGS.trailWidth,
+      ),
+      hintBackgroundColor: normalizeHexColor(
+        base.hintBackgroundColor,
+        DEFAULT_SETTINGS.hintBackgroundColor,
+      ),
+      hintBackgroundOpacity: normalizeOpacityPercent(
+        base.hintBackgroundOpacity,
+        DEFAULT_SETTINGS.hintBackgroundOpacity,
+      ),
+      hintBorderColor: normalizeHexColor(
+        base.hintBorderColor,
+        DEFAULT_SETTINGS.hintBorderColor,
+      ),
+      hintBorderOpacity: normalizeOpacityPercent(
+        base.hintBorderOpacity,
+        DEFAULT_SETTINGS.hintBorderOpacity,
+      ),
+      hintBorderMatchedColor: normalizeHexColor(
+        base.hintBorderMatchedColor,
+        DEFAULT_SETTINGS.hintBorderMatchedColor,
+      ),
+      hintBorderMatchedOpacity: normalizeOpacityPercent(
+        base.hintBorderMatchedOpacity,
+        DEFAULT_SETTINGS.hintBorderMatchedOpacity,
       ),
       triggerMouseButton: normalizeChoice(
         base.triggerMouseButton,
@@ -1224,6 +1274,8 @@
     gesturePreviewArrowSpecFromTemplate,
     normalizeGestureArray,
     normalizeHexColor,
+    normalizeOpacityPercent,
+    rgbaFromHexAndOpacity,
     sanitizeSettings,
     DIRECTION_ANGLES,
     angleForDirection,

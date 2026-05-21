@@ -10,7 +10,37 @@
   const inaccuracyDegreesInput = document.getElementById("inaccuracyDegrees");
   const trailColorPickerInput = document.getElementById("trailColorPicker");
   const trailColorHexInput = document.getElementById("trailColorHex");
+  const trailOpacityInput = document.getElementById("trailOpacity");
+  const trailOpacityValueEl = document.getElementById("trailOpacityValue");
   const trailWidthInput = document.getElementById("trailWidth");
+  const hintBackgroundPickerInput = document.getElementById(
+    "hintBackgroundPicker",
+  );
+  const hintBackgroundHexInput = document.getElementById("hintBackgroundHex");
+  const hintBackgroundOpacityInput = document.getElementById(
+    "hintBackgroundOpacity",
+  );
+  const hintBackgroundOpacityValueEl = document.getElementById(
+    "hintBackgroundOpacityValue",
+  );
+  const hintBorderPickerInput = document.getElementById("hintBorderPicker");
+  const hintBorderHexInput = document.getElementById("hintBorderHex");
+  const hintBorderOpacityInput = document.getElementById("hintBorderOpacity");
+  const hintBorderOpacityValueEl = document.getElementById(
+    "hintBorderOpacityValue",
+  );
+  const hintBorderMatchedPickerInput = document.getElementById(
+    "hintBorderMatchedPicker",
+  );
+  const hintBorderMatchedHexInput = document.getElementById(
+    "hintBorderMatchedHex",
+  );
+  const hintBorderMatchedOpacityInput = document.getElementById(
+    "hintBorderMatchedOpacity",
+  );
+  const hintBorderMatchedOpacityValueEl = document.getElementById(
+    "hintBorderMatchedOpacityValue",
+  );
   const triggerMouseButtonInput = document.getElementById("triggerMouseButton");
   const triggerModifierInput = document.getElementById("triggerModifier");
   const rockerMiddleLeftActionInput = document.getElementById(
@@ -96,13 +126,86 @@
     statusEl.classList.toggle("err", !!isError);
   }
 
-  function syncColorInputs(rawColor) {
-    const color = common.normalizeHexColor(
-      rawColor,
-      common.DEFAULT_SETTINGS.trailColor,
+  function formatOpacityPercent(opacity) {
+    return `${opacity}%`;
+  }
+
+  function syncColorWithOpacityInputs(
+    pickerInput,
+    hexInput,
+    opacityInput,
+    opacityValueEl,
+    rawColor,
+    rawOpacity,
+    fallbackColor,
+    fallbackOpacity,
+  ) {
+    const color = common.normalizeHexColor(rawColor, fallbackColor);
+    const opacity = common.normalizeOpacityPercent(
+      rawOpacity,
+      fallbackOpacity,
     );
-    trailColorPickerInput.value = color;
-    trailColorHexInput.value = color;
+    pickerInput.value = color;
+    hexInput.value = color;
+    opacityInput.value = String(opacity);
+    if (opacityValueEl) {
+      opacityValueEl.textContent = formatOpacityPercent(opacity);
+    }
+  }
+
+  function bindColorWithOpacityInputs(
+    pickerInput,
+    hexInput,
+    opacityInput,
+    opacityValueEl,
+    fallbackColor,
+    fallbackOpacity,
+  ) {
+    pickerInput.addEventListener("input", () => {
+      syncColorWithOpacityInputs(
+        pickerInput,
+        hexInput,
+        opacityInput,
+        opacityValueEl,
+        pickerInput.value,
+        opacityInput.value,
+        fallbackColor,
+        fallbackOpacity,
+      );
+    });
+
+    hexInput.addEventListener("input", () => {
+      const normalized = common.normalizeHexColor(
+        hexInput.value,
+        fallbackColor,
+      );
+      if (normalized !== hexInput.value.toLowerCase()) return;
+      pickerInput.value = normalized;
+    });
+
+    hexInput.addEventListener("blur", () => {
+      syncColorWithOpacityInputs(
+        pickerInput,
+        hexInput,
+        opacityInput,
+        opacityValueEl,
+        hexInput.value,
+        opacityInput.value,
+        fallbackColor,
+        fallbackOpacity,
+      );
+    });
+
+    opacityInput.addEventListener("input", () => {
+      const opacity = common.normalizeOpacityPercent(
+        opacityInput.value,
+        fallbackOpacity,
+      );
+      opacityInput.value = String(opacity);
+      if (opacityValueEl) {
+        opacityValueEl.textContent = formatOpacityPercent(opacity);
+      }
+    });
   }
 
   function getMinSegmentPxFromForm() {
@@ -353,8 +456,47 @@
     minSegmentPxInput.value = String(settings.minSegmentPx);
     pipeWidthInput.value = String(settings.pipeWidth);
     inaccuracyDegreesInput.value = String(settings.inaccuracyDegrees);
-    syncColorInputs(settings.trailColor);
+    syncColorWithOpacityInputs(
+      trailColorPickerInput,
+      trailColorHexInput,
+      trailOpacityInput,
+      trailOpacityValueEl,
+      settings.trailColor,
+      settings.trailOpacity,
+      common.DEFAULT_SETTINGS.trailColor,
+      common.DEFAULT_SETTINGS.trailOpacity,
+    );
     trailWidthInput.value = String(settings.trailWidth);
+    syncColorWithOpacityInputs(
+      hintBackgroundPickerInput,
+      hintBackgroundHexInput,
+      hintBackgroundOpacityInput,
+      hintBackgroundOpacityValueEl,
+      settings.hintBackgroundColor,
+      settings.hintBackgroundOpacity,
+      common.DEFAULT_SETTINGS.hintBackgroundColor,
+      common.DEFAULT_SETTINGS.hintBackgroundOpacity,
+    );
+    syncColorWithOpacityInputs(
+      hintBorderPickerInput,
+      hintBorderHexInput,
+      hintBorderOpacityInput,
+      hintBorderOpacityValueEl,
+      settings.hintBorderColor,
+      settings.hintBorderOpacity,
+      common.DEFAULT_SETTINGS.hintBorderColor,
+      common.DEFAULT_SETTINGS.hintBorderOpacity,
+    );
+    syncColorWithOpacityInputs(
+      hintBorderMatchedPickerInput,
+      hintBorderMatchedHexInput,
+      hintBorderMatchedOpacityInput,
+      hintBorderMatchedOpacityValueEl,
+      settings.hintBorderMatchedColor,
+      settings.hintBorderMatchedOpacity,
+      common.DEFAULT_SETTINGS.hintBorderMatchedColor,
+      common.DEFAULT_SETTINGS.hintBorderMatchedOpacity,
+    );
     triggerMouseButtonInput.value = settings.triggerMouseButton;
     triggerModifierInput.value = settings.triggerModifier;
     rockerMiddleLeftActionInput.value = settings.rockerMiddleLeftAction;
@@ -388,7 +530,14 @@
       pipeWidth: pipeWidthInput.value,
       inaccuracyDegrees: inaccuracyDegreesInput.value,
       trailColor: trailColorHexInput.value,
+      trailOpacity: trailOpacityInput.value,
       trailWidth: trailWidthInput.value,
+      hintBackgroundColor: hintBackgroundHexInput.value,
+      hintBackgroundOpacity: hintBackgroundOpacityInput.value,
+      hintBorderColor: hintBorderHexInput.value,
+      hintBorderOpacity: hintBorderOpacityInput.value,
+      hintBorderMatchedColor: hintBorderMatchedHexInput.value,
+      hintBorderMatchedOpacity: hintBorderMatchedOpacityInput.value,
       triggerMouseButton: triggerMouseButtonInput.value,
       triggerModifier: triggerModifierInput.value,
       rockerMiddleLeftAction: rockerMiddleLeftActionInput.value,
@@ -430,22 +579,38 @@
     }
   });
 
-  trailColorPickerInput.addEventListener("input", () => {
-    syncColorInputs(trailColorPickerInput.value);
-  });
-
-  trailColorHexInput.addEventListener("input", () => {
-    const normalized = common.normalizeHexColor(
-      trailColorHexInput.value,
-      common.DEFAULT_SETTINGS.trailColor,
-    );
-    if (normalized !== trailColorHexInput.value.toLowerCase()) return;
-    trailColorPickerInput.value = normalized;
-  });
-
-  trailColorHexInput.addEventListener("blur", () => {
-    syncColorInputs(trailColorHexInput.value);
-  });
+  bindColorWithOpacityInputs(
+    trailColorPickerInput,
+    trailColorHexInput,
+    trailOpacityInput,
+    trailOpacityValueEl,
+    common.DEFAULT_SETTINGS.trailColor,
+    common.DEFAULT_SETTINGS.trailOpacity,
+  );
+  bindColorWithOpacityInputs(
+    hintBackgroundPickerInput,
+    hintBackgroundHexInput,
+    hintBackgroundOpacityInput,
+    hintBackgroundOpacityValueEl,
+    common.DEFAULT_SETTINGS.hintBackgroundColor,
+    common.DEFAULT_SETTINGS.hintBackgroundOpacity,
+  );
+  bindColorWithOpacityInputs(
+    hintBorderPickerInput,
+    hintBorderHexInput,
+    hintBorderOpacityInput,
+    hintBorderOpacityValueEl,
+    common.DEFAULT_SETTINGS.hintBorderColor,
+    common.DEFAULT_SETTINGS.hintBorderOpacity,
+  );
+  bindColorWithOpacityInputs(
+    hintBorderMatchedPickerInput,
+    hintBorderMatchedHexInput,
+    hintBorderMatchedOpacityInput,
+    hintBorderMatchedOpacityValueEl,
+    common.DEFAULT_SETTINGS.hintBorderMatchedColor,
+    common.DEFAULT_SETTINGS.hintBorderMatchedOpacity,
+  );
 
   teachCancel.addEventListener("click", () => closeTeachModal());
 
