@@ -16,12 +16,18 @@
   const GESTURE_HINT_MAX_WIDTH_PX = 280;
   const HINT_BORDER_DEFAULT = "rgba(200, 230, 255, 0.38)";
   const HINT_BORDER_MATCHED = "rgba(92, 224, 124, 0.8)";
+  /** Grace window after modified right-click gestures; catches mouseup-deferred Linux menus. */
+  const MODIFIED_RIGHT_CONTEXT_SUPPRESS_MS = 2500;
   let settings = common.sanitizeSettings(common.DEFAULT_SETTINGS);
   let tracking = false;
   let path = [];
   let anchorPoint = null;
   let totalDistance = 0;
   let suppressNextContextMenu = false;
+  /** True while the configured right-click gesture button is held after a committed press. */
+  let rightGestureButtonDown = false;
+  let modifiedRightContextSuppressUntil = 0;
+  let rightGestureButtonDownReleaseTimer = null;
   let trailCanvas = null;
   let trailCtx = null;
   let gesturePipeCanvas = null;
@@ -374,14 +380,157 @@ let gestureCurveScaleLen = 0;
   function isModifierSatisfied(event) {
     switch (settings.triggerModifier) {
       case "alt":
-        return !!event.altKey || !!event.metaKey;
-      case "shift":
-        return !!event.shiftKey;
+        return !!event.altKey;
+      case "meta":
+        return !!event.metaKey;
       case "ctrl":
         return !!event.ctrlKey;
       default:
         return true;
     }
+  }
+
+  function requiresGestureModifier() {
+    return settings.triggerModifier !== "unset";
+  }
+
+  function isModifiedRightClickWithModifierHeld(event) {
+    return (
+      settings.triggerMouseButton === "right" &&
+      requiresGestureModifier() &&
+      !!event &&
+      isModifierSatisfied(event)
+    );
+  }
+
+  function clearModifiedRightGestureSuppressionState() {
+    modifiedRightContextSuppressUntil = 0;
+    suppressNextContextMenu = false;
+    rightGestureButtonDown = false;
+    if (rightGestureButtonDownReleaseTimer != null) {
+      clearTimeout(rightGestureButtonDownReleaseTimer);
+      rightGestureButtonDownReleaseTimer = null;
+    }
+    hideModifiedRightGestureCaptureOverlay(0);
+  }
+
+  function armModifiedRightContextMenuSuppress(durationMs) {
+    if (!requiresGestureModifier()) return;
+    const extendTo =
+      Date.now() + (durationMs || MODIFIED_RIGHT_CONTEXT_SUPPRESS_MS);
+    if (extendTo > modifiedRightContextSuppressUntil) {
+      modifiedRightContextSuppressUntil = extendTo;
+    }
+    setSuppressFollowingContextMenu();
+  }
+
+  function shouldBlockGestureContextMenu() {
+    return (
+      suppressNextContextMenu ||
+      rightGestureButtonDown ||
+      tracking ||
+      Date.now() < modifiedRightContextSuppressUntil
+    );
+  }
+
+  function contextMenuBlockReason() {
+    if (rightGestureButtonDown) {
+      return "Context menu suppressed during right-click gesture press.";
+    }
+    if (tracking) return "Context menu suppressed while tracking gesture.";
+    if (Date.now() < modifiedRightContextSuppressUntil) {
+      return "Context menu suppressed (modified right-click grace window).";
+    }
+    return "Context menu suppressed after gesture.";
+  }
+
+  function scheduleRightGestureButtonDownRelease() {
+    if (rightGestureButtonDownReleaseTimer != null) {
+      clearTimeout(rightGestureButtonDownReleaseTimer);
+    }
+    rightGestureButtonDownReleaseTimer = setTimeout(() => {
+      rightGestureButtonDownReleaseTimer = null;
+      rightGestureButtonDown = false;
+    }, 150);
+  }
+
+  function finishModifiedRightGesturePress(event) {
+    if (
+      settings.triggerMouseButton !== "right" ||
+      !isMatchingMouseButton(event.button) ||
+      !rightGestureButtonDown
+    ) {
+      return;
+    }
+    if (requiresGestureModifier()) {
+      armModifiedRightContextMenuSuppress(MODIFIED_RIGHT_CONTEXT_SUPPRESS_MS);
+      event.preventDefault();
+      event.stopPropagation();
+      hideModifiedRightGestureCaptureOverlay(MODIFIED_RIGHT_CONTEXT_SUPPRESS_MS);
+    }
+    scheduleRightGestureButtonDownRelease();
+  }
+
+  function suppressGestureContextMenu(event, reason) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === "function") {
+      event.stopImmediatePropagation();
+    }
+    appendDebugLog(reason);
+  }
+
+  let modifiedRightGestureCaptureOverlay = null;
+  let modifiedRightGestureCaptureHideTimer = null;
+
+  function showModifiedRightGestureCaptureOverlay(event) {
+    if (!isModifiedRightClickWithModifierHeld(event)) return;
+    const root = document.documentElement;
+    if (!root) return;
+    if (!modifiedRightGestureCaptureOverlay) {
+      const el = document.createElement("div");
+      el.setAttribute("data-navigestures-modified-right-capture", "");
+      el.style.cssText =
+        "position:fixed;inset:0;z-index:2147483646;background:transparent;cursor:default;";
+      el.addEventListener(
+        "contextmenu",
+        (event) => {
+          if (shouldBlockGestureContextMenu()) {
+            suppressGestureContextMenu(
+              event,
+              "Context menu suppressed on modified right-click capture overlay.",
+            );
+          }
+        },
+        true,
+      );
+      modifiedRightGestureCaptureOverlay = el;
+    }
+    if (modifiedRightGestureCaptureHideTimer != null) {
+      clearTimeout(modifiedRightGestureCaptureHideTimer);
+      modifiedRightGestureCaptureHideTimer = null;
+    }
+    if (!modifiedRightGestureCaptureOverlay.isConnected) {
+      root.appendChild(modifiedRightGestureCaptureOverlay);
+    }
+  }
+
+  function hideModifiedRightGestureCaptureOverlay(delayMs) {
+    if (!modifiedRightGestureCaptureOverlay) return;
+    if (modifiedRightGestureCaptureHideTimer != null) {
+      clearTimeout(modifiedRightGestureCaptureHideTimer);
+    }
+    modifiedRightGestureCaptureHideTimer = setTimeout(() => {
+      modifiedRightGestureCaptureHideTimer = null;
+      if (
+        modifiedRightGestureCaptureOverlay &&
+        modifiedRightGestureCaptureOverlay.isConnected &&
+        !rightGestureButtonDown &&
+        !tracking
+      ) {
+        modifiedRightGestureCaptureOverlay.remove();
+      }
+    }, delayMs || MODIFIED_RIGHT_CONTEXT_SUPPRESS_MS);
   }
 
   function clientCoordsInTopViewport(clientX, clientY) {
@@ -467,6 +616,7 @@ let gestureCurveScaleLen = 0;
 
   let sawPointerRelayError = false;
   let subframeRightGestureContextGuardUntil = 0;
+  let subframeRightGestureButtonDown = false;
   let subframeRemoteGestureActive = false;
 
   function armSubframeRightGestureContextGuard() {
@@ -1454,6 +1604,11 @@ let gestureCurveScaleLen = 0;
       );
       if (settings.triggerMouseButton === "right")
         setSuppressFollowingContextMenu();
+    } else if (requiresGestureModifier()) {
+      armModifiedRightContextMenuSuppress(MODIFIED_RIGHT_CONTEXT_SUPPRESS_MS);
+      appendDebugLog(
+        "Context menu suppressed after modified right-click gesture release.",
+      );
     } else {
       appendDebugLog(
         "No pipe completed and movement too small to suppress context menu.",
@@ -1470,6 +1625,12 @@ let gestureCurveScaleLen = 0;
     resetGestureState();
     broadcastIframeGestureActive(false);
     clearTrail();
+    if (rightGestureButtonDownReleaseTimer != null) {
+      clearTimeout(rightGestureButtonDownReleaseTimer);
+      rightGestureButtonDownReleaseTimer = null;
+    }
+    hideModifiedRightGestureCaptureOverlay(0);
+    rightGestureButtonDown = false;
     appendDebugLog("Gesture cancelled.");
   }
 
@@ -1552,6 +1713,12 @@ let gestureCurveScaleLen = 0;
       broadcastIframeGestureActive(false);
       clearTrail();
       finishTrail();
+      if (requiresGestureModifier()) {
+        armModifiedRightContextMenuSuppress(MODIFIED_RIGHT_CONTEXT_SUPPRESS_MS);
+        appendDebugLog(
+          "Context menu armed for suppress after modified gesture abort.",
+        );
+      }
       return;
     }
 
@@ -1568,13 +1735,23 @@ let gestureCurveScaleLen = 0;
 
     if (!isMatchingMouseButton(event.button)) return;
     if (!isModifierSatisfied(event)) {
+      if (
+        isMatchingMouseButton(event.button) &&
+        settings.triggerMouseButton === "right" &&
+        requiresGestureModifier()
+      ) {
+        clearModifiedRightGestureSuppressionState();
+      }
       appendDebugLog(
         `Mouse down ignored: modifier '${settings.triggerModifier}' not held.`,
       );
       return;
     }
 
-    if (settings.triggerMouseButton === "right") {
+    if (
+      settings.triggerMouseButton === "right" &&
+      !requiresGestureModifier()
+    ) {
       const now = Date.now();
       const isSecondStationaryClick =
         now - lastRightStationaryClickAt <= RIGHT_MENU_DOUBLECLICK_MS;
@@ -1590,12 +1767,20 @@ let gestureCurveScaleLen = 0;
     }
 
     blockGestureUntilRelease = false;
-    beginGestureTracking(event.clientX, event.clientY);
-    // Linux (and some toolkits) open the menu from default right-button mousedown;
-    // preventDefault here reliably defers the menu until the double–right-click bypass path.
+
+    if (isModifiedRightClickWithModifierHeld(event)) {
+      armModifiedRightContextMenuSuppress(MODIFIED_RIGHT_CONTEXT_SUPPRESS_MS);
+      showModifiedRightGestureCaptureOverlay(event);
+    }
+
     if (settings.triggerMouseButton === "right") {
+      rightGestureButtonDown = true;
+      // Linux (and some toolkits) open the menu from default right-button mousedown;
+      // preventDefault must run before gesture setup so the menu stays deferred.
       event.preventDefault();
     }
+
+    beginGestureTracking(event.clientX, event.clientY);
   }
 
   function onMouseMove(event) {
@@ -1618,7 +1803,21 @@ let gestureCurveScaleLen = 0;
       blockGestureUntilRelease = false;
       return;
     }
-    if (!tracking) return;
+
+    const endingRightGesturePress =
+      settings.triggerMouseButton === "right" &&
+      isMatchingMouseButton(event.button) &&
+      rightGestureButtonDown;
+
+    if (endingRightGesturePress && requiresGestureModifier()) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    if (!tracking) {
+      if (endingRightGesturePress) finishModifiedRightGesturePress(event);
+      return;
+    }
 
     ingestGesturePointerSample(event.clientX, event.clientY, {
       updateVisuals: false,
@@ -1631,11 +1830,13 @@ let gestureCurveScaleLen = 0;
       ) {
         lastRightStationaryClickAt = 0;
       }
+      if (endingRightGesturePress) finishModifiedRightGesturePress(event);
       return;
     }
 
     if (
       settings.triggerMouseButton === "right" &&
+      !requiresGestureModifier() &&
       isMatchingMouseButton(event.button)
     ) {
       const isStationaryClick =
@@ -1649,28 +1850,30 @@ let gestureCurveScaleLen = 0;
     }
 
     completeGesture(isMatchingMouseButton(event.button));
+
+    if (endingRightGesturePress) finishModifiedRightGesturePress(event);
   }
 
   function onContextMenu(event) {
     if (shouldSuppressPointerAfterRocker()) {
-      event.preventDefault();
-      appendDebugLog("Context menu suppressed after rocker.");
+      suppressGestureContextMenu(event, "Context menu suppressed after rocker.");
       return;
     }
 
-    if (suppressNextContextMenu) {
-      event.preventDefault();
-      suppressNextContextMenu = false;
-      appendDebugLog("Context menu suppressed after gesture.");
-      return;
+    if (
+      requiresGestureModifier() &&
+      settings.triggerMouseButton === "right" &&
+      !isModifierSatisfied(event)
+    ) {
+      clearModifiedRightGestureSuppressionState();
+      if (!shouldBlockGestureContextMenu()) return;
     }
 
-    if (tracking) {
-      // While tracking, menu is always suppressed (gesture press cycle).
-      event.preventDefault();
-      appendDebugLog("Context menu suppressed while tracking gesture.");
-      return;
-    }
+    if (!shouldBlockGestureContextMenu()) return;
+
+    const hadQueuedSuppress = suppressNextContextMenu;
+    if (hadQueuedSuppress) suppressNextContextMenu = false;
+    suppressGestureContextMenu(event, contextMenuBlockReason());
   }
 
   function onClick(event) {
@@ -1681,10 +1884,17 @@ let gestureCurveScaleLen = 0;
   }
 
   function onAuxClick(event) {
-    if (!shouldSuppressPointerAfterRocker()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    appendDebugLog("Aux click suppressed after rocker.");
+    if (shouldSuppressPointerAfterRocker()) {
+      event.preventDefault();
+      event.stopPropagation();
+      appendDebugLog("Aux click suppressed after rocker.");
+      return;
+    }
+    if (event.button === 2 && shouldBlockGestureContextMenu()) {
+      event.preventDefault();
+      event.stopPropagation();
+      appendDebugLog("Aux click suppressed during modified right-click gesture.");
+    }
   }
 
   function onWheel(event) {
@@ -1795,6 +2005,7 @@ let gestureCurveScaleLen = 0;
     if (settings.triggerMouseButton === "right") {
       event.preventDefault();
       armSubframeRightGestureContextGuard();
+      subframeRightGestureButtonDown = true;
     }
     relayPointerToMainFrame("mousedown", envelopeFromMouse(event, xy));
   }
@@ -1811,6 +2022,7 @@ let gestureCurveScaleLen = 0;
     if (!xy) return;
     if (settings.triggerMouseButton === "right" && event.button === 2) {
       disarmSubframeRightGestureContextGuard();
+      subframeRightGestureButtonDown = false;
     }
     relayPointerToMainFrame("mouseup", envelopeFromMouse(event, xy));
   }
@@ -1836,11 +2048,14 @@ let gestureCurveScaleLen = 0;
       return;
     }
     if (
-      settings.triggerMouseButton === "right" &&
-      (subframeRemoteGestureActive ||
+      subframeRightGestureButtonDown ||
+      subframeRemoteGestureActive ||
+      Date.now() < modifiedRightContextSuppressUntil ||
+      (settings.triggerMouseButton === "right" &&
         Date.now() < subframeRightGestureContextGuardUntil)
     ) {
       event.preventDefault();
+      event.stopPropagation();
     }
   }
 
@@ -1881,6 +2096,7 @@ let gestureCurveScaleLen = 0;
       if (document.hidden) cancelGesture();
     });
     window.addEventListener("contextmenu", onContextMenu, true);
+    document.addEventListener("contextmenu", onContextMenu, true);
     window.addEventListener("click", onClick, true);
     window.addEventListener("auxclick", onAuxClick, true);
     window.addEventListener("wheel", onWheel, {

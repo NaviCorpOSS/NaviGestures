@@ -18,7 +18,7 @@
   ];
   const ROCKER_ASSIGNABLE_ACTIONS = ["none", ...ACTIONS];
   const VALID_MOUSE_BUTTONS = ["right", "middle"];
-  const VALID_MODIFIERS = ["unset", "alt", "shift", "ctrl"];
+  const VALID_MODIFIERS = ["unset", "alt", "meta", "ctrl"];
   const ACTION_LABELS = {
     none: "Do nothing",
     reload: "Reload page",
@@ -55,7 +55,7 @@
       toggleFullscreen: [],
     },
     minSegmentPx: 35,
-    pipeWidth: 100,
+    pipeWidth: 150,
     inaccuracyDegrees: 50,
     trailColor: "#24a1ff",
     trailWidth: 3,
