@@ -30,6 +30,7 @@
   let rightGestureButtonDown = false;
   let modifiedRightContextSuppressUntil = 0;
   let rightGestureButtonDownReleaseTimer = null;
+  let trailOverlayHost = null;
   let trailCanvas = null;
   let trailCtx = null;
   let gesturePipeCanvas = null;
@@ -1008,39 +1009,81 @@ let gestureCurveScaleLen = 0;
     return changed;
   }
 
-  function createGesturePipeCanvas() {
-    if (gesturePipeCanvas || !document.documentElement) return;
-    gesturePipeCanvas = document.createElement("canvas");
-    gesturePipeCanvas.setAttribute("aria-hidden", "true");
-    gesturePipeCanvas.style.position = "fixed";
-    gesturePipeCanvas.style.left = "0";
-    gesturePipeCanvas.style.top = "0";
-    gesturePipeCanvas.style.width = "100vw";
-    gesturePipeCanvas.style.height = "100vh";
-    gesturePipeCanvas.style.pointerEvents = "none";
-    // Keep pipe overlay below active stroke / hint layers.
-    gesturePipeCanvas.style.zIndex = "2147483644";
-    gesturePipeCtx = gesturePipeCanvas.getContext("2d");
-    document.documentElement.appendChild(gesturePipeCanvas);
+  function resetTrailOverlayRefs() {
+    trailOverlayHost = null;
+    trailCanvas = null;
+    trailCtx = null;
+    gesturePipeCanvas = null;
+    gesturePipeCtx = null;
   }
 
-  function createTrailCanvas() {
-    if (trailCanvas || !document.documentElement) return;
-    createGesturePipeCanvas();
+  function trailOverlayIsLive() {
+    return (
+      trailOverlayHost &&
+      trailOverlayHost.isConnected &&
+      trailCanvas &&
+      trailCanvas.isConnected &&
+      trailCtx
+    );
+  }
+
+  function ensureTrailOverlayHost() {
+    if (!document.documentElement) return false;
+    if (trailOverlayHost && trailOverlayHost.isConnected) return true;
+    if (trailOverlayHost && !trailOverlayHost.isConnected) {
+      resetTrailOverlayRefs();
+    }
+    const uid = randomNaviGesturesUiSuffix();
+    const host = document.createElement("div");
+    host.id = `ng-trail-host-${uid}`;
+    host.setAttribute("data-navigestures-ui", "gesture-trail");
+    host.setAttribute("aria-hidden", "true");
+    // Match gesture hint z-index so site overlays cannot sit between trail and hint.
+    host.style.cssText =
+      "position:fixed;inset:0;z-index:2147483647;pointer-events:none;display:block;";
+    const shadow = host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = `
+      *, *::before, *::after { box-sizing: border-box; }
+      canvas {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 100vw;
+        height: 100vh;
+        pointer-events: none;
+      }
+    `;
+    shadow.appendChild(style);
+    trailOverlayHost = host;
+    document.documentElement.appendChild(trailOverlayHost);
+    return true;
+  }
+
+  function ensureTrailCanvas() {
+    if (trailOverlayIsLive()) return true;
+    resetTrailOverlayRefs();
+    if (!ensureTrailOverlayHost()) return false;
+    const shadow = trailOverlayHost.shadowRoot;
+    if (!shadow) return false;
+
+    gesturePipeCanvas = document.createElement("canvas");
+    gesturePipeCanvas.setAttribute("aria-hidden", "true");
+    gesturePipeCtx = gesturePipeCanvas.getContext("2d");
+    shadow.appendChild(gesturePipeCanvas);
+
     trailCanvas = document.createElement("canvas");
     trailCanvas.setAttribute("aria-hidden", "true");
-    trailCanvas.style.position = "fixed";
-    trailCanvas.style.left = "0";
-    trailCanvas.style.top = "0";
-    trailCanvas.style.width = "100vw";
-    trailCanvas.style.height = "100vh";
-    trailCanvas.style.pointerEvents = "none";
-    trailCanvas.style.zIndex = "2147483645";
-
     trailCtx = trailCanvas.getContext("2d");
+    shadow.appendChild(trailCanvas);
     resizeTrailCanvas();
     applyTrailStyle();
-    document.documentElement.appendChild(trailCanvas);
+    return !!trailCtx;
+  }
+
+  function initTrailOverlay() {
+    ensureTrailCanvas();
+    resizeTrailCanvas();
   }
 
   function resizeTrailCanvas() {
@@ -1199,6 +1242,9 @@ let gestureCurveScaleLen = 0;
   }
 
   function redrawGesturePipeOverlay() {
+    if (!gesturePipeCtx || !gesturePipeCanvas || !trailOverlayIsLive()) {
+      if (!ensureTrailCanvas()) return;
+    }
     if (!gesturePipeCtx || !gesturePipeCanvas) return;
     gesturePipeCtx.clearRect(
       0,
@@ -1277,7 +1323,8 @@ let gestureCurveScaleLen = 0;
   }
 
   function startTrail(x, y) {
-    createTrailCanvas();
+    ensureTrailCanvas();
+    resizeTrailCanvas();
     if (!trailCtx) return;
     if (clearTrailTimer) {
       clearTimeout(clearTrailTimer);
@@ -1289,6 +1336,10 @@ let gestureCurveScaleLen = 0;
 
   /** One full-path stroke per update so semi-transparent color does not stack at joints. */
   function refreshTrailFromStroke() {
+    if (!trailOverlayIsLive()) {
+      ensureTrailCanvas();
+      resizeTrailCanvas();
+    }
     if (!trailCtx) return;
     redrawTrailSegmented();
   }
@@ -2125,13 +2176,14 @@ let gestureCurveScaleLen = 0;
     once: true,
   });
   if (NG_IS_TOP_FRAME) {
-    if (document.documentElement) {
-      createTrailCanvas();
-    } else {
-      window.addEventListener("DOMContentLoaded", createTrailCanvas, {
+    if (document.readyState === "loading") {
+      window.addEventListener("DOMContentLoaded", initTrailOverlay, {
         once: true,
       });
+    } else {
+      initTrailOverlay();
     }
+    window.addEventListener("pageshow", initTrailOverlay);
     window.addEventListener("resize", resizeTrailCanvas);
     if (window.visualViewport) {
       window.visualViewport.addEventListener("resize", resizeTrailCanvas);
