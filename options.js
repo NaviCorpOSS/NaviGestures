@@ -89,6 +89,9 @@
   let teachLastStroke = { template: null };
   let gesturePathTemplatesState = common.defaultGesturePathTemplates();
   let gestureTokensState = {};
+  let suppressAutoSave = false;
+  let autoSaveTimer = null;
+  const AUTO_SAVE_MS = 400;
 
   function storageGet(key) {
     if (isBrowserApi) {
@@ -574,30 +577,58 @@
     });
   }
 
-  async function loadAndRender() {
-    const data = await storageGet("settings");
-    const settings = common.sanitizeSettings(
-      data.settings || common.DEFAULT_SETTINGS,
-    );
-    renderSettings(settings);
-  }
-
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
+  async function persistSettings() {
     try {
       const settings = collectSettingsFromForm();
       await storageSet({ settings });
       setStatus("Saved.");
+      suppressAutoSave = true;
       renderSettings(settings);
+      suppressAutoSave = false;
+      return true;
     } catch (_) {
       setStatus("Could not save settings.", true);
+      return false;
+    }
+  }
+
+  function scheduleAutoSave() {
+    if (suppressAutoSave) return;
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(() => {
+      void persistSettings();
+    }, AUTO_SAVE_MS);
+  }
+
+  async function loadAndRender() {
+    suppressAutoSave = true;
+    try {
+      const data = await storageGet("settings");
+      const settings = common.sanitizeSettings(
+        data.settings || common.DEFAULT_SETTINGS,
+      );
+      renderSettings(settings);
+    } finally {
+      suppressAutoSave = false;
+    }
+  }
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!suppressAutoSave) {
+      clearTimeout(autoSaveTimer);
+      void persistSettings();
     }
   });
+  form.addEventListener("input", scheduleAutoSave);
+  form.addEventListener("change", scheduleAutoSave);
 
   resetBtn.addEventListener("click", async () => {
     try {
       await storageSet({ settings: common.DEFAULT_SETTINGS });
+      suppressAutoSave = true;
       renderSettings(common.DEFAULT_SETTINGS);
+      suppressAutoSave = false;
       setStatus("Defaults restored.");
     } catch (_) {
       setStatus("Could not reset settings.", true);
@@ -654,12 +685,9 @@
     gestureTokensState[a] = [...(common.DEFAULT_SETTINGS.gestures[a] || [])];
     closeTeachModal();
     updateGestureRowPreview(a);
-    try {
-      const settings = collectSettingsFromForm();
-      await storageSet({ settings });
+    if (await persistSettings()) {
       setStatus("Gesture restored to default path.");
-      renderSettings(settings);
-    } catch (_) {
+    } else {
       setStatus("Could not save restored gesture.", true);
     }
   });
@@ -670,12 +698,9 @@
     gestureTokensState[teachCurrentAction] = [];
     updateGestureRowPreview(teachCurrentAction);
     closeTeachModal();
-    try {
-      const settings = collectSettingsFromForm();
-      await storageSet({ settings });
+    if (await persistSettings()) {
       setStatus("Gesture saved.");
-      renderSettings(settings);
-    } catch (_) {
+    } else {
       setStatus(
         "Gesture updated on this page but could not write storage.",
         true,
