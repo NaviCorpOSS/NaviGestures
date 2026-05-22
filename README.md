@@ -14,6 +14,7 @@ Supported actions include:
 - Back / Forward
 - Reload page
 - Close tab
+- Reopen closed tab
 - New tab
 - Zoom in / Zoom out
 - Scroll left / Scroll right
